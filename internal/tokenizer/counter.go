@@ -97,6 +97,11 @@ func (c *Counter) CountText(modelName string, text string) int {
 	return len(enc.Encode(text, nil, nil))
 }
 
+// QuickEstimate returns a fast token estimate using len/4 heuristic (no tiktoken).
+func (c *Counter) QuickEstimate(messages []model.Message) int {
+	return c.fallbackCount(messages)
+}
+
 func (c *Counter) fallbackCount(messages []model.Message) int {
 	total := 0
 	for _, msg := range messages {

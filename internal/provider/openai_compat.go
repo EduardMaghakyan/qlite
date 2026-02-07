@@ -9,10 +9,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/eduardmaghakyan/qlite/internal/model"
 	"github.com/eduardmaghakyan/qlite/internal/sse"
 )
+
+var bufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
 
 // OpenAICompat is a provider that speaks the OpenAI-compatible API.
 type OpenAICompat struct {
@@ -29,6 +35,9 @@ func NewOpenAICompat(name, baseURL, apiKey string, models []string) *OpenAICompa
 		DisableCompression:  true,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		WriteBufferSize:     32 << 10,
+		ReadBufferSize:      32 << 10,
 	}
 	return &OpenAICompat{
 		name:    name,
@@ -48,12 +57,14 @@ func (o *OpenAICompat) Chat(ctx context.Context, req *model.ChatRequest) (*model
 	req.Stream = false
 	req.StreamOptions = nil
 
-	body, err := json.Marshal(req)
-	if err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+	if err := json.NewEncoder(buf).Encode(req); err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -84,12 +95,14 @@ func (o *OpenAICompat) ChatStream(ctx context.Context, req *model.ChatRequest, s
 	req.Stream = true
 	req.StreamOptions = &model.StreamOptions{IncludeUsage: true}
 
-	body, err := json.Marshal(req)
-	if err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+	if err := json.NewEncoder(buf).Encode(req); err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

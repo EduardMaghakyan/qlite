@@ -55,7 +55,13 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	apiKey := extractAPIKey(r)
-	inputTokens := h.counter.CountMessages(chatReq.Model, chatReq.Messages)
+
+	// For non-streaming, skip local token counting — upstream returns accurate Usage.
+	// For streaming, use fast len/4 heuristic to set the X-Tokens-Input header.
+	var inputTokens int
+	if chatReq.Stream {
+		inputTokens = h.counter.QuickEstimate(chatReq.Messages)
+	}
 
 	proxyReq := &model.ProxyRequest{
 		ChatRequest: chatReq,

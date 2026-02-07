@@ -6,7 +6,7 @@ server:
 providers:
   - name: mock-openai
     type: openai
-    base_url: http://localhost:${MOCK_PORT:-9999}
+    base_url: "http://localhost:9999/v1"
     api_key: mock-key
     models:
       - gpt-4o
