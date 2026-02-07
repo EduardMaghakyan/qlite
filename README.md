@@ -9,6 +9,7 @@ A lightweight reverse proxy for OpenAI-compatible LLM APIs, built with Go's stan
 - Token counting via tiktoken
 - Request ID tracking, structured JSON logging, CORS, panic recovery
 - Pipeline architecture for extensible request/response processing
+- Exact-match response cache with TTL and LRU eviction
 - Optional pprof profiling endpoint
 
 ## Quick Start
@@ -52,9 +53,50 @@ providers:
       - gpt-4o
       - gpt-4o-mini
       - gpt-4.1-nano
+
+cache:
+  exact:
+    enabled: false
+    ttl: 1h
+    max_entries: 10000
 ```
 
 Set the config path via `QLITE_CONFIG` (defaults to `config/config.yaml`).
+
+## Cache
+
+qlite includes an optional exact-match response cache. When enabled, identical requests return cached responses instantly with zero provider cost.
+
+### How it works
+
+- Cache keys are SHA-256 hashes of `model`, `messages`, `temperature`, and `top_p`
+- The `stream` flag is excluded from the key — a non-streaming request populates the cache, and a subsequent streaming request can replay it as SSE
+- Requests with `temperature > 0` skip the cache (non-deterministic responses shouldn't be cached)
+- Non-streaming responses are stored on cache miss; streaming responses are read-only (never stored)
+- Expired entries are lazily evicted on access; when at capacity, the oldest entry is evicted
+
+### Response headers
+
+All proxied requests include:
+
+| Header | Values | Description |
+|--------|--------|-------------|
+| `X-Cache` | `HIT` / `MISS` | Whether the response came from cache |
+| `X-Provider` | `cache` / provider name | Which backend served the response |
+| `X-Request-Cost` | `0` on HIT | Estimated cost of the request |
+| `X-Tokens-Saved` | token count (HIT only) | Tokens saved by the cache hit |
+
+### Configuration
+
+```yaml
+cache:
+  exact:
+    enabled: false       # default off
+    ttl: 1h              # time-to-live per entry
+    max_entries: 10000   # LRU capacity
+```
+
+Set `enabled: true` to turn on. Supports `${ENV_VAR}` substitution (e.g., `enabled: ${QLITE_CACHE:-true}`).
 
 ## Architecture
 
@@ -62,6 +104,7 @@ Set the config path via `QLITE_CONFIG` (defaults to `config/config.yaml`).
 cmd/proxy/          → main entrypoint
 cmd/mockserver/     → mock OpenAI server for testing
 internal/
+  cache/            → exact-match response cache
   config/           → YAML config loading
   model/            → request/response types
   pipeline/         → Stage + StreamStage processing pipeline
