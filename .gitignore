@@ -33,3 +33,5 @@ go.work.sum
 
 mockserver
 proxy
+
+__pycache__

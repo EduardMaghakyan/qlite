@@ -51,6 +51,10 @@ The qlite proxy reads its config from `QLITE_CONFIG` (defaults to `config/config
 
 A Locust test suite with 6 tasks that exercise both proxied and direct (baseline) paths. Users wait 0.5–2s between tasks.
 
+### Cache Load Test (`loadtest/cache_locustfile.py`)
+
+A Locust test suite focused on cache performance at configurable hit rates. Set the target hit rate with the `CACHE_HIT_RATE` env var (0–100, default 0). During startup each user warms the cache by sending 10 fixed messages. During the test, each request randomly rolls against `CACHE_HIT_RATE` to decide whether to re-use a cached message or send a unique one. At test end a summary prints the actual vs target hit rate.
+
 ## Locust Test Tasks
 
 | Task | Weight | Description |
@@ -62,6 +66,12 @@ A Locust test suite with 6 tasks that exercise both proxied and direct (baseline
 | `direct_streaming` | 1 | Streaming directly to mock server (baseline). Bypasses proxy. |
 | `health_check` | 1 | `GET /health` via proxy. |
 
+## Cache Test Tasks
+
+| Task | Weight | Description |
+|------|--------|-------------|
+| `cache_request` | 1 | Rolls against `CACHE_HIT_RATE` to pick a cached or unique message. Names requests `[cache-HIT]`/`[cache-MISS]` for separate Locust stats. |
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -69,6 +79,8 @@ A Locust test suite with 6 tasks that exercise both proxied and direct (baseline
 | `QLITE_TEST_MODEL` | `gpt-4o-mini` | Model name sent in requests |
 | `OPENAI_API_KEY` | `test-key` | API key header value |
 | `MOCK_URL` | `http://localhost:9999` | Direct mock server URL for baseline tasks |
+| `QLITE_CACHE` | `true` | Enable/disable proxy cache. Set to `false` for pure overhead measurement. Used via `${QLITE_CACHE:-true}` in `config.mock.yaml`. |
+| `CACHE_HIT_RATE` | `0` | Target cache hit rate (0–100). 0 = all misses, 100 = all hits after warmup. |
 
 ## Go Benchmarks
 
@@ -125,6 +137,22 @@ go run ./cmd/mockserver/ -port 9999 -latency 5ms -chunks 20 -response-tokens 100
 # Export results to CSV
 locust -f loadtest/locustfile.py --host http://localhost:8080 \
   --users 20 --spawn-rate 5 --run-time 60s --headless --csv=results
+
+# Normal test without cache (pure overhead measurement)
+QLITE_CACHE=false locust -f loadtest/locustfile.py --host http://localhost:8080 \
+  --users 20 --spawn-rate 5 --run-time 60s --headless
+
+# Cache load test — 80% hit rate
+CACHE_HIT_RATE=80 locust -f loadtest/cache_locustfile.py \
+  --host http://localhost:8080 --users 20 --spawn-rate 5 --run-time 60s --headless
+
+# Cache — all misses
+CACHE_HIT_RATE=0 locust -f loadtest/cache_locustfile.py \
+  --host http://localhost:8080 --users 20 --spawn-rate 5 --run-time 60s --headless
+
+# Cache — all hits (after warmup)
+CACHE_HIT_RATE=100 locust -f loadtest/cache_locustfile.py \
+  --host http://localhost:8080 --users 20 --spawn-rate 5 --run-time 60s --headless
 ```
 
 ## Benchmark Results

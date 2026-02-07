@@ -5,7 +5,7 @@ server:
 
 cache:
   exact:
-    enabled: true
+    enabled: ${QLITE_CACHE:-true}
     ttl: 1h
     max_entries: 10000
 
