@@ -31,7 +31,7 @@ func setupTestHandler(t *testing.T, mockSrv *httptest.Server) *Handler {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewHandler(pipe, counter, logger)
+	return NewHandler(pipe, counter, logger, nil)
 }
 
 func TestHandler_NonStreaming(t *testing.T) {

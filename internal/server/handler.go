@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eduardmaghakyan/qlite/internal/cache"
 	"github.com/eduardmaghakyan/qlite/internal/model"
 	"github.com/eduardmaghakyan/qlite/internal/pipeline"
 	"github.com/eduardmaghakyan/qlite/internal/sse"
@@ -20,14 +21,16 @@ type Handler struct {
 	pipeline *pipeline.Pipeline
 	counter  *tokenizer.Counter
 	logger   *slog.Logger
+	cache    *cache.ExactCache
 }
 
-// NewHandler creates a new request handler.
-func NewHandler(p *pipeline.Pipeline, counter *tokenizer.Counter, logger *slog.Logger) *Handler {
+// NewHandler creates a new request handler. The cache parameter may be nil (disabled).
+func NewHandler(p *pipeline.Pipeline, counter *tokenizer.Counter, logger *slog.Logger, c *cache.ExactCache) *Handler {
 	return &Handler{
 		pipeline: p,
 		counter:  counter,
 		logger:   logger,
+		cache:    c,
 	}
 }
 
@@ -87,12 +90,22 @@ func (h *Handler) handleNonStreaming(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
+	// Store in cache on miss.
+	if h.cache != nil && resp.CacheStatus == "MISS" {
+		h.cache.Put(&proxyReq.ChatRequest, resp.ChatResponse)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Request-Cost", strconv.FormatFloat(resp.Cost, 'f', 8, 64))
 	w.Header().Set("X-Tokens-Input", strconv.Itoa(resp.ChatResponse.Usage.PromptTokens))
 	w.Header().Set("X-Tokens-Output", strconv.Itoa(resp.OutputTokens))
 	w.Header().Set("X-Cache", resp.CacheStatus)
 	w.Header().Set("X-Provider", resp.ProviderName)
+
+	if resp.CacheStatus == "HIT" {
+		totalTokens := resp.ChatResponse.Usage.PromptTokens + resp.ChatResponse.Usage.CompletionTokens
+		w.Header().Set("X-Tokens-Saved", strconv.Itoa(totalTokens))
+	}
 
 	if err := json.NewEncoder(w).Encode(resp.ChatResponse); err != nil {
 		h.logger.Error("failed to write response", "error", err, "request_id", proxyReq.RequestID)

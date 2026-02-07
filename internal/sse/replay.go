@@ -1,16 +1,15 @@
-package server
+package sse
 
 import (
 	"encoding/json"
 	"time"
 
 	"github.com/eduardmaghakyan/qlite/internal/model"
-	"github.com/eduardmaghakyan/qlite/internal/sse"
 )
 
 // WriteResponseAsSSE replays a complete ChatResponse as SSE events.
 // This is used for serving cached responses to streaming requests.
-func WriteResponseAsSSE(sw sse.Writer, resp *model.ChatResponse) error {
+func WriteResponseAsSSE(sw Writer, resp *model.ChatResponse) error {
 	// Send role chunk.
 	roleChunk := model.ChatStreamChunk{
 		ID:      resp.ID,

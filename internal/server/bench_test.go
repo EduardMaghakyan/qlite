@@ -58,7 +58,7 @@ func TestProxyOverhead_P99(t *testing.T) {
 	dispatch := pipeline.NewDispatchStage(registry, counter)
 	pipe, _ := pipeline.New(dispatch)
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	handler := NewHandler(pipe, counter, logger)
+	handler := NewHandler(pipe, counter, logger, nil)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -169,7 +169,7 @@ func TestProxyOverhead_P99_Concurrent(t *testing.T) {
 	dispatch := pipeline.NewDispatchStage(registry, counter)
 	pipe, _ := pipeline.New(dispatch)
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	handler := NewHandler(pipe, counter, logger)
+	handler := NewHandler(pipe, counter, logger, nil)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)

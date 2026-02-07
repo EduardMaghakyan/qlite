@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/eduardmaghakyan/qlite/internal/cache"
 	"github.com/eduardmaghakyan/qlite/internal/config"
 	"github.com/eduardmaghakyan/qlite/internal/pipeline"
 	"github.com/eduardmaghakyan/qlite/internal/provider"
@@ -56,14 +57,27 @@ func main() {
 	}
 	registry.Freeze()
 
+	var exactCache *cache.ExactCache
+	if cfg.Cache.Exact.Enabled {
+		exactCache = cache.New(cfg.Cache.Exact.TTL, cfg.Cache.Exact.MaxEntries)
+		logger.Info("exact cache enabled", "ttl", cfg.Cache.Exact.TTL, "max_entries", cfg.Cache.Exact.MaxEntries)
+	}
+
 	dispatch := pipeline.NewDispatchStage(registry, counter)
-	pipe, err := pipeline.New(dispatch)
+
+	var stages []any
+	if exactCache != nil {
+		stages = append(stages, pipeline.NewCacheStage(exactCache, true))
+	}
+	stages = append(stages, dispatch)
+
+	pipe, err := pipeline.New(stages...)
 	if err != nil {
 		logger.Error("failed to create pipeline", "error", err)
 		os.Exit(1)
 	}
 
-	handler := server.NewHandler(pipe, counter, logger)
+	handler := server.NewHandler(pipe, counter, logger, exactCache)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 

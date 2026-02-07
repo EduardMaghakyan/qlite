@@ -9,8 +9,19 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
+	Server    ServerConfig     `yaml:"server"`
 	Providers []ProviderConfig `yaml:"providers"`
+	Cache     CacheConfig      `yaml:"cache"`
+}
+
+type CacheConfig struct {
+	Exact ExactCacheConfig `yaml:"exact"`
+}
+
+type ExactCacheConfig struct {
+	Enabled    bool          `yaml:"enabled"`
+	TTL        time.Duration `yaml:"ttl"`
+	MaxEntries int           `yaml:"max_entries"`
 }
 
 type ServerConfig struct {
@@ -58,6 +69,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Server.WriteTimeout == 0 {
 		cfg.Server.WriteTimeout = 120 * time.Second
+	}
+	if cfg.Cache.Exact.TTL == 0 {
+		cfg.Cache.Exact.TTL = time.Hour
+	}
+	if cfg.Cache.Exact.MaxEntries == 0 {
+		cfg.Cache.Exact.MaxEntries = 10000
 	}
 }
 

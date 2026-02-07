@@ -3,6 +3,12 @@ server:
   read_timeout: 30s
   write_timeout: 120s
 
+cache:
+  exact:
+    enabled: false
+    ttl: 1h
+    max_entries: 10000
+
 providers:
   - name: openai
     type: openai
