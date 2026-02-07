@@ -1,0 +1,148 @@
+package provider
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	"github.com/eduardmaghakyan/qlite/internal/model"
+	"github.com/eduardmaghakyan/qlite/internal/sse"
+)
+
+// OpenAICompat is a provider that speaks the OpenAI-compatible API.
+type OpenAICompat struct {
+	name    string
+	baseURL string
+	apiKey  string
+	models  []string
+	client  *http.Client
+}
+
+// NewOpenAICompat creates a new OpenAI-compatible provider.
+func NewOpenAICompat(name, baseURL, apiKey string, models []string) *OpenAICompat {
+	transport := &http.Transport{
+		DisableCompression:  true,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+	}
+	return &OpenAICompat{
+		name:    name,
+		baseURL: baseURL,
+		apiKey:  apiKey,
+		models:  models,
+		client:  &http.Client{Transport: transport},
+	}
+}
+
+func (o *OpenAICompat) Name() string    { return o.name }
+func (o *OpenAICompat) Models() []string { return o.models }
+
+// Chat sends a non-streaming chat completion request.
+func (o *OpenAICompat) Chat(ctx context.Context, req *model.ChatRequest) (*model.ChatResponse, error) {
+	// Ensure stream is false.
+	req.Stream = false
+	req.StreamOptions = nil
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	o.setHeaders(httpReq)
+
+	resp, err := o.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var chatResp model.ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return &chatResp, nil
+}
+
+// ChatStream sends a streaming chat completion request and relays SSE chunks.
+func (o *OpenAICompat) ChatStream(ctx context.Context, req *model.ChatRequest, sw sse.Writer) (*model.Usage, error) {
+	// Enable streaming with usage.
+	req.Stream = true
+	req.StreamOptions = &model.StreamOptions{IncludeUsage: true}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	o.setHeaders(httpReq)
+
+	resp, err := o.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var usage *model.Usage
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			if err := sw.Done(); err != nil {
+				return usage, fmt.Errorf("writing done: %w", err)
+			}
+			break
+		}
+
+		// Parse chunk to extract usage from the final chunk.
+		var chunk model.ChatStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+		}
+
+		// Forward the raw chunk immediately.
+		if err := sw.WriteEvent([]byte(data)); err != nil {
+			return usage, fmt.Errorf("writing event: %w", err)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return usage, fmt.Errorf("reading stream: %w", err)
+	}
+
+	return usage, nil
+}
+
+func (o *OpenAICompat) setHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+o.apiKey)
+}
