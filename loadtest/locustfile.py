@@ -19,6 +19,15 @@ Usage:
   # Terminal 3: locust -f loadtest/locustfile.py --host http://localhost:8080 \
   #               --users 20 --spawn-rate 5 --run-time 60s --headless
   # Compare "direct [non-stream]" avg vs "/v1/chat/completions [non-stream]" avg
+
+  # --- Stress test (reveal proxy overhead) ---
+  # Terminal 1: go run ./cmd/mockserver/ -port 9999 -latency 5ms -chunks 20 -response-tokens 100
+  # Terminal 2: QLITE_CONFIG=config/config.mock.yaml go run ./cmd/proxy/
+  # Terminal 3: locust -f loadtest/locustfile.py --host http://localhost:8080 \
+  #               --users 5 --spawn-rate 1 --run-time 120s --headless
+  # Lower latency (5ms) makes overhead more visible as % of total.
+  # More chunks (20) exercises per-chunk buffer allocation in SSE writer.
+  # Fewer users (5) eliminates Python GIL / OS scheduler P99 noise.
 """
 
 import json
@@ -51,6 +60,15 @@ HEADERS = {
 class QliteUser(HttpUser):
     wait_time = between(0.5, 2)
 
+    def on_start(self):
+        # Pooled session for direct-to-mock baseline (bypasses Locust client)
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10, pool_maxsize=10
+        )
+        self.direct_session = requests.Session()
+        self.direct_session.mount("http://", adapter)
+        self.direct_session.mount("https://", adapter)
+
     @task(3)
     def chat_non_streaming(self):
         """Non-streaming chat completion."""
@@ -77,7 +95,12 @@ class QliteUser(HttpUser):
 
     @task(3)
     def chat_streaming(self):
-        """Streaming chat completion — measures time-to-first-byte and full stream."""
+        """Streaming chat completion — measures time-to-first-byte and full stream.
+
+        Uses raw session (not self.client) so Locust does not auto-record a
+        duplicate "/v1/chat/completions [stream]" metric.  Only our manual
+        TTFB and total custom events are emitted.
+        """
         payload = {
             "model": MODEL,
             "messages": MESSAGES_SHORT,
@@ -89,16 +112,24 @@ class QliteUser(HttpUser):
         chunk_count = 0
         got_done = False
 
-        with self.client.post(
-            "/v1/chat/completions",
-            json=payload,
-            headers=HEADERS,
-            stream=True,
-            catch_response=True,
-            name="/v1/chat/completions [stream]",
-        ) as resp:
+        try:
+            resp = self.direct_session.post(
+                f"{self.host}/v1/chat/completions",
+                json=payload,
+                headers=HEADERS,
+                stream=True,
+                timeout=10,
+            )
             if resp.status_code != 200:
-                resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                events.request.fire(
+                    request_type="SSE",
+                    name="total [proxy-stream]",
+                    response_time=elapsed_ms,
+                    response_length=0,
+                    exception=Exception(f"Status {resp.status_code}"),
+                    context={},
+                )
                 return
 
             for line in resp.iter_lines():
@@ -114,22 +145,49 @@ class QliteUser(HttpUser):
                         first_chunk_time = time.perf_counter()
                     chunk_count += 1
 
-            if not got_done:
-                resp.failure("Stream did not end with [DONE]")
-            elif chunk_count == 0:
-                resp.failure("No data chunks received")
-            else:
-                resp.success()
+            end = time.perf_counter()
 
-        # Fire custom TTFB metric.
-        if first_chunk_time is not None:
-            ttfb_ms = (first_chunk_time - start) * 1000
+            # Fire custom TTFB metric (time to first data chunk).
+            if first_chunk_time is not None:
+                ttfb_ms = (first_chunk_time - start) * 1000
+                events.request.fire(
+                    request_type="SSE",
+                    name="TTFB [proxy-stream]",
+                    response_time=ttfb_ms,
+                    response_length=0,
+                    exception=None,
+                    context={},
+                )
+
+            # Fire total stream time metric (start → [DONE]).
+            if got_done:
+                total_ms = (end - start) * 1000
+                events.request.fire(
+                    request_type="SSE",
+                    name="total [proxy-stream]",
+                    response_time=total_ms,
+                    response_length=0,
+                    exception=None,
+                    context={},
+                )
+            else:
+                total_ms = (end - start) * 1000
+                events.request.fire(
+                    request_type="SSE",
+                    name="total [proxy-stream]",
+                    response_time=total_ms,
+                    response_length=0,
+                    exception=Exception("No [DONE] marker" if not got_done else "No data chunks"),
+                    context={},
+                )
+        except Exception as e:
+            elapsed_ms = (time.perf_counter() - start) * 1000
             events.request.fire(
                 request_type="SSE",
-                name="TTFB [stream]",
-                response_time=ttfb_ms,
+                name="total [proxy-stream]",
+                response_time=elapsed_ms,
                 response_length=0,
-                exception=None,
+                exception=e,
                 context={},
             )
 
@@ -174,7 +232,7 @@ class QliteUser(HttpUser):
         }
         start = time.perf_counter()
         try:
-            resp = requests.post(
+            resp = self.direct_session.post(
                 f"{MOCK_URL}/v1/chat/completions",
                 json=payload,
                 headers=HEADERS,
@@ -220,8 +278,9 @@ class QliteUser(HttpUser):
             "max_tokens": 10,
         }
         start = time.perf_counter()
+        first_chunk_time = None
         try:
-            resp = requests.post(
+            resp = self.direct_session.post(
                 f"{MOCK_URL}/v1/chat/completions",
                 json=payload,
                 headers=HEADERS,
@@ -232,7 +291,7 @@ class QliteUser(HttpUser):
                 elapsed_ms = (time.perf_counter() - start) * 1000
                 events.request.fire(
                     request_type="POST",
-                    name="direct [stream]",
+                    name="total [direct-stream]",
                     response_time=elapsed_ms,
                     response_length=0,
                     exception=Exception(f"Status {resp.status_code}"),
@@ -245,15 +304,19 @@ class QliteUser(HttpUser):
                 if not line:
                     continue
                 decoded = line.decode("utf-8") if isinstance(line, bytes) else line
-                if decoded == "data: [DONE]":
-                    got_done = True
-                    break
+                if decoded.startswith("data: "):
+                    data = decoded[6:]
+                    if data == "[DONE]":
+                        got_done = True
+                        break
+                    if first_chunk_time is None:
+                        first_chunk_time = time.perf_counter()
 
             elapsed_ms = (time.perf_counter() - start) * 1000
             if got_done:
                 events.request.fire(
                     request_type="POST",
-                    name="direct [stream]",
+                    name="total [direct-stream]",
                     response_time=elapsed_ms,
                     response_length=0,
                     exception=None,
@@ -262,17 +325,29 @@ class QliteUser(HttpUser):
             else:
                 events.request.fire(
                     request_type="POST",
-                    name="direct [stream]",
+                    name="total [direct-stream]",
                     response_time=elapsed_ms,
                     response_length=0,
                     exception=Exception("No [DONE] marker"),
+                    context={},
+                )
+
+            # Fire custom TTFB metric (time to first data chunk).
+            if first_chunk_time is not None:
+                ttfb_ms = (first_chunk_time - start) * 1000
+                events.request.fire(
+                    request_type="SSE",
+                    name="TTFB [direct-stream]",
+                    response_time=ttfb_ms,
+                    response_length=0,
+                    exception=None,
                     context={},
                 )
         except Exception as e:
             elapsed_ms = (time.perf_counter() - start) * 1000
             events.request.fire(
                 request_type="POST",
-                name="direct [stream]",
+                name="total [direct-stream]",
                 response_time=elapsed_ms,
                 response_length=0,
                 exception=e,

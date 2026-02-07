@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/eduardmaghakyan/qlite/internal/model"
 	"github.com/eduardmaghakyan/qlite/internal/sse"
@@ -26,6 +27,7 @@ type Provider interface {
 type Registry struct {
 	mu        sync.RWMutex
 	providers map[string]Provider
+	frozen    atomic.Pointer[map[string]Provider]
 }
 
 // NewRegistry creates an empty provider registry.
@@ -44,8 +46,27 @@ func (r *Registry) Register(p Provider) {
 	}
 }
 
+// Freeze creates an immutable snapshot for lock-free reads.
+// Call after all providers are registered.
+func (r *Registry) Freeze() {
+	r.mu.RLock()
+	snapshot := make(map[string]Provider, len(r.providers))
+	for k, v := range r.providers {
+		snapshot[k] = v
+	}
+	r.mu.RUnlock()
+	r.frozen.Store(&snapshot)
+}
+
 // Lookup returns the provider for a given model name.
 func (r *Registry) Lookup(model string) (Provider, error) {
+	if m := r.frozen.Load(); m != nil {
+		p, ok := (*m)[model]
+		if !ok {
+			return nil, fmt.Errorf("no provider registered for model %q", model)
+		}
+		return p, nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.providers[model]

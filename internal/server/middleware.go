@@ -4,19 +4,22 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type contextKey string
 
 const RequestIDKey contextKey = "request_id"
 
+var reqCounter atomic.Uint64
+
 // RequestID adds a unique request ID to each request.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := uuid.New().String()
+		id := strconv.FormatUint(reqCounter.Add(1), 36)
 		ctx := context.WithValue(r.Context(), RequestIDKey, id)
 		w.Header().Set("X-Request-ID", id)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -29,12 +32,18 @@ func GetRequestID(ctx context.Context) string {
 	return id
 }
 
+var statusWriterPool = sync.Pool{
+	New: func() any { return &statusWriter{} },
+}
+
 // Logger logs each request with method, path, status, and duration.
 func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			sw := &statusWriter{ResponseWriter: w}
+			sw := statusWriterPool.Get().(*statusWriter)
+			sw.ResponseWriter = w
+			sw.status = 0
 			next.ServeHTTP(sw, r)
 			logger.Info("request",
 				"method", r.Method,
@@ -43,6 +52,8 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 				"duration", time.Since(start).String(),
 				"request_id", GetRequestID(r.Context()),
 			)
+			sw.ResponseWriter = nil
+			statusWriterPool.Put(sw)
 		})
 	}
 }

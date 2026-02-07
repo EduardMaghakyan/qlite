@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +18,12 @@ import (
 var bufPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
+
+var (
+	dataPrefix = []byte("data: ")
+	doneMarker = []byte("[DONE]")
+	usageKey   = []byte(`"usage"`)
+)
 
 // OpenAICompat is a provider that speaks the OpenAI-compatible API.
 type OpenAICompat struct {
@@ -33,11 +38,12 @@ type OpenAICompat struct {
 func NewOpenAICompat(name, baseURL, apiKey string, models []string) *OpenAICompat {
 	transport := &http.Transport{
 		DisableCompression:  true,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
+		MaxIdleConns:        1000,
+		MaxIdleConnsPerHost: 1000,
 		IdleConnTimeout:     90 * time.Second,
 		WriteBufferSize:     32 << 10,
 		ReadBufferSize:      32 << 10,
+		ForceAttemptHTTP2:   true,
 	}
 	return &OpenAICompat{
 		name:    name,
@@ -122,28 +128,28 @@ func (o *OpenAICompat) ChatStream(ctx context.Context, req *model.ChatRequest, s
 	var usage *model.Usage
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		line := scanner.Bytes()
+		if !bytes.HasPrefix(line, dataPrefix) {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
+		data := line[len(dataPrefix):]
+		if bytes.Equal(data, doneMarker) {
 			if err := sw.Done(); err != nil {
 				return usage, fmt.Errorf("writing done: %w", err)
 			}
 			break
 		}
 
-		// Parse chunk to extract usage from the final chunk.
-		var chunk model.ChatStreamChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
-			if chunk.Usage != nil {
+		// Only parse chunks that contain a usage field (typically the final chunk).
+		if bytes.Contains(data, usageKey) {
+			var chunk model.ChatStreamChunk
+			if err := json.Unmarshal(data, &chunk); err == nil && chunk.Usage != nil {
 				usage = chunk.Usage
 			}
 		}
 
 		// Forward the raw chunk immediately.
-		if err := sw.WriteEvent([]byte(data)); err != nil {
+		if err := sw.WriteEvent(data); err != nil {
 			return usage, fmt.Errorf("writing event: %w", err)
 		}
 	}

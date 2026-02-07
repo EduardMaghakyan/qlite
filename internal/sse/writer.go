@@ -2,7 +2,6 @@ package sse
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 )
 
@@ -39,20 +38,18 @@ func (s *writer) SetHeader(key, value string) {
 }
 
 func (s *writer) WriteEvent(data []byte) error {
-	if _, err := io.WriteString(s.w, "data: "); err != nil {
-		return err
-	}
-	if _, err := s.w.Write(data); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(s.w, "\n\n"); err != nil {
+	buf := make([]byte, 0, 6+len(data)+2) // "data: " + data + "\n\n"
+	buf = append(buf, "data: "...)
+	buf = append(buf, data...)
+	buf = append(buf, '\n', '\n')
+	if _, err := s.w.Write(buf); err != nil {
 		return err
 	}
 	return s.rc.Flush()
 }
 
 func (s *writer) Done() error {
-	if _, err := io.WriteString(s.w, "data: [DONE]\n\n"); err != nil {
+	if _, err := s.w.Write([]byte("data: [DONE]\n\n")); err != nil {
 		return err
 	}
 	return s.rc.Flush()

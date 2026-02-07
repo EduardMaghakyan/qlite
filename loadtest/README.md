@@ -37,9 +37,11 @@ A minimal OpenAI-compatible server that returns fixed responses with configurabl
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-port` | `9999` | Listen port |
-| `-latency` | `50ms` | Simulated latency. Applied once for non-streaming; applied **per-chunk** for streaming (3 chunks total) |
+| `-latency` | `50ms` | Simulated latency. Applied once for non-streaming; applied **per-chunk** for streaming |
+| `-chunks` | `3` | Number of SSE chunks for streaming (min 2: role + finish) |
+| `-response-tokens` | `10` | Approximate content tokens (~5 chars each) |
 
-Non-streaming requests return a single JSON response after one latency sleep. Streaming requests emit 3 SSE chunks (role delta, content delta, finish/usage delta), each preceded by a latency sleep, followed by `[DONE]`.
+Non-streaming requests return a single JSON response after one latency sleep. Streaming requests emit `-chunks` SSE chunks (role delta, content deltas, finish/usage delta), each preceded by a latency sleep, followed by `[DONE]`. Content is generated from a repeating lorem ipsum corpus sized to `-response-tokens × 5` characters, split evenly across the middle content chunks.
 
 ### Proxy (`cmd/proxy/`)
 
@@ -117,7 +119,77 @@ locust -f loadtest/locustfile.py --host http://localhost:8080 \
 # Higher simulated upstream latency
 go run ./cmd/mockserver/ -port 9999 -latency 100ms
 
+# Stress test — fast upstream, many chunks
+go run ./cmd/mockserver/ -port 9999 -latency 5ms -chunks 20 -response-tokens 100
+
 # Export results to CSV
 locust -f loadtest/locustfile.py --host http://localhost:8080 \
   --users 20 --spawn-rate 5 --run-time 60s --headless --csv=results
+```
+
+## Benchmark Results
+
+### Standard Test (50ms latency, 3 chunks, 20 users, 60s)
+
+Mock server: `-latency 50ms` (default 3 chunks, 10 response-tokens)
+
+| Metric | Direct | Proxied | Overhead |
+|--------|--------|---------|----------|
+| Non-stream Avg | ~50ms | ~51ms | **~1ms** |
+| Stream Avg | ~152ms | ~153ms | **~1ms** |
+| TTFB [stream] P50 | — | ~52ms | **~2ms** |
+| P99 (non-stream) | ~55ms | ~57ms | **~2ms** |
+
+**1,000+ requests** across 20 concurrent users. Proxy overhead consistently < 3ms.
+
+### Stress Test (5ms latency, 20 chunks, 20 users, 60s)
+
+Mock server: `-latency 5ms -chunks 20 -response-tokens 100`
+
+| Metric | Direct | Proxied | Overhead |
+|--------|--------|---------|----------|
+| Non-stream Avg | ~5ms | ~6ms | **~1ms** |
+| Stream Avg | ~102ms | ~102ms | **~0ms** |
+| TTFB [stream] P50 | — | ~6ms | **~1ms** |
+| P99 (non-stream) | ~9ms | ~10ms | **~1ms** |
+
+**~116K requests** over 60s. With fast upstream latency and many chunks, the proxy adds negligible overhead — under 1ms P50 TTFB for streaming, effectively 0ms total overhead on streaming responses.
+
+### Summary
+
+The proxy overhead is **< 3ms** under all tested conditions, well within the **< 10ms P99** target.
+
+## Profiling
+
+pprof profiling is available on the proxy behind an opt-in env var.
+
+### Enable pprof
+
+```bash
+QLITE_PPROF=1 QLITE_CONFIG=config/config.mock.yaml go run ./cmd/proxy/
+```
+
+This starts a debug server on `:6060` with pprof handlers. The debug server is separate from the main API server — no middleware interference.
+
+### Capture CPU profile during a load test
+
+```bash
+# Start a 30-second CPU profile while Locust is running
+go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+```
+
+### Capture heap profile
+
+```bash
+go tool pprof http://localhost:6060/debug/pprof/heap
+```
+
+### View profiles in browser
+
+```bash
+# Interactive web UI for a saved profile
+go tool pprof -http=:8081 profile.pb.gz
+
+# Or view directly from the running server
+go tool pprof -http=:8081 http://localhost:6060/debug/pprof/heap
 ```

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,15 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	if os.Getenv("QLITE_PPROF") == "1" {
+		go func() {
+			logger.Info("pprof enabled on :6060")
+			if err := http.ListenAndServe(":6060", nil); err != nil {
+				logger.Error("pprof server error", "error", err)
+			}
+		}()
+	}
 
 	configPath := "config/config.yaml"
 	if p := os.Getenv("QLITE_CONFIG"); p != "" {
@@ -44,6 +54,7 @@ func main() {
 			logger.Warn("unknown provider type, skipping", "type", pc.Type, "name", pc.Name)
 		}
 	}
+	registry.Freeze()
 
 	dispatch := pipeline.NewDispatchStage(registry, counter)
 	pipe, err := pipeline.New(dispatch)
@@ -64,10 +75,11 @@ func main() {
 	)
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
-		Handler:      wrapped,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
+		Addr:              fmt.Sprintf(":%d", cfg.Server.Port),
+		Handler:           wrapped,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      cfg.Server.WriteTimeout,
 	}
 
 	go func() {

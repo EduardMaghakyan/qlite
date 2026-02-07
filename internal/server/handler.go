@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,9 +88,9 @@ func (h *Handler) handleNonStreaming(w http.ResponseWriter, r *http.Request, pro
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Request-Cost", fmt.Sprintf("%.8f", resp.Cost))
-	w.Header().Set("X-Tokens-Input", fmt.Sprintf("%d", resp.ChatResponse.Usage.PromptTokens))
-	w.Header().Set("X-Tokens-Output", fmt.Sprintf("%d", resp.OutputTokens))
+	w.Header().Set("X-Request-Cost", strconv.FormatFloat(resp.Cost, 'f', 8, 64))
+	w.Header().Set("X-Tokens-Input", strconv.Itoa(resp.ChatResponse.Usage.PromptTokens))
+	w.Header().Set("X-Tokens-Output", strconv.Itoa(resp.OutputTokens))
 	w.Header().Set("X-Cache", resp.CacheStatus)
 	w.Header().Set("X-Provider", resp.ProviderName)
 
@@ -100,7 +101,7 @@ func (h *Handler) handleNonStreaming(w http.ResponseWriter, r *http.Request, pro
 
 func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, proxyReq *model.ProxyRequest) {
 	sw := sse.NewWriter(w)
-	sw.SetHeader("X-Tokens-Input", fmt.Sprintf("%d", proxyReq.InputTokens))
+	sw.SetHeader("X-Tokens-Input", strconv.Itoa(proxyReq.InputTokens))
 	sw.SetHeader("X-Cache", "MISS")
 
 	resp, err := h.pipeline.ExecuteStream(r.Context(), proxyReq, sw)
