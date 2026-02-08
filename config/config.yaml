@@ -5,7 +5,7 @@ server:
 
 cache:
   exact:
-    enabled: false
+    enabled: true
     ttl: 1h
     max_entries: 10000
 
