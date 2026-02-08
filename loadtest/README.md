@@ -32,7 +32,7 @@ locust -f loadtest/locustfile.py --host http://localhost:8080 \
 
 ### Mock Server (`cmd/mockserver/`)
 
-A minimal OpenAI-compatible server that returns fixed responses with configurable latency.
+A minimal multi-provider mock server that returns fixed responses with configurable latency. Supports OpenAI, Anthropic, and Google (Gemini) API formats.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -45,7 +45,7 @@ Non-streaming requests return a single JSON response after one latency sleep. St
 
 ### Proxy (`cmd/proxy/`)
 
-The qlite proxy reads its config from `QLITE_CONFIG` (defaults to `config/config.yaml`). For load testing, use `config/config.mock.yaml`, which routes models `gpt-4o`, `gpt-4o-mini`, and `gpt-4.1-nano` to the mock server at `localhost:9999`.
+The qlite proxy reads its config from `QLITE_CONFIG` (defaults to `config/config.yaml`). For load testing, use `config/config.mock.yaml`, which routes OpenAI models (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1-nano`), Anthropic models (`claude-sonnet-4-5`, `claude-haiku-4-5`), and Google models (`gemini-2.5-flash`, `gemini-2.5-pro`) to the mock server at `localhost:9999`.
 
 ### Locust Suite (`loadtest/locustfile.py`)
 
@@ -72,6 +72,43 @@ A Locust test suite focused on cache performance at configurable hit rates. Set 
 |------|--------|-------------|
 | `cache_request` | 1 | Rolls against `CACHE_HIT_RATE` to pick a cached or unique message. Names requests `[cache-HIT]`/`[cache-MISS]` for separate Locust stats. |
 
+### Multi-Provider Overhead Test (`loadtest/provider_locustfile.py`)
+
+A focused Locust test that exercises all 3 provider adapter paths (OpenAI, Anthropic, Google) with cache disabled to measure pure proxy overhead for each. Includes both proxied and direct-to-mock baselines for fair comparison.
+
+## Provider Test Tasks
+
+| Task | Weight | Description |
+|------|--------|-------------|
+| `openai_non_stream` | 1 | Non-streaming via proxy, OpenAI model |
+| `openai_stream` | 1 | Streaming via proxy, OpenAI model |
+| `anthropic_non_stream` | 1 | Non-streaming via proxy, Anthropic model |
+| `anthropic_stream` | 1 | Streaming via proxy, Anthropic model |
+| `google_non_stream` | 1 | Non-streaming via proxy, Google model |
+| `google_stream` | 1 | Streaming via proxy, Google model |
+| `direct_openai` | 1 | Direct baseline, OpenAI mock |
+| `direct_anthropic` | 1 | Direct baseline, Anthropic mock |
+| `direct_google` | 1 | Direct baseline, Google mock |
+| `direct_openai_stream` | 1 | Direct streaming baseline, OpenAI mock |
+| `direct_anthropic_stream` | 1 | Direct streaming baseline, Anthropic mock |
+| `direct_google_stream` | 1 | Direct streaming baseline, Google mock |
+
+### Running the Provider Test
+
+```bash
+# Terminal 1 — Mock server
+go run ./cmd/mockserver/ -port 9999 -latency 50ms
+
+# Terminal 2 — Proxy with cache disabled
+QLITE_CACHE=false QLITE_CONFIG=config/config.mock.yaml go run ./cmd/proxy/
+
+# Terminal 3 — Multi-provider load test
+locust -f loadtest/provider_locustfile.py --host http://localhost:8080 \
+  --users 20 --spawn-rate 5 --run-time 60s --headless
+```
+
+Compare per-provider metrics: `[openai non-stream]` vs `direct [openai non-stream]`, etc. The overhead for Anthropic and Google adapters includes request/response translation cost and should be comparable to OpenAI pass-through.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -80,6 +117,9 @@ A Locust test suite focused on cache performance at configurable hit rates. Set 
 | `OPENAI_API_KEY` | `test-key` | API key header value |
 | `MOCK_URL` | `http://localhost:9999` | Direct mock server URL for baseline tasks |
 | `QLITE_CACHE` | `true` | Enable/disable proxy cache. Set to `false` for pure overhead measurement. Used via `${QLITE_CACHE:-true}` in `config.mock.yaml`. |
+| `QLITE_OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model for provider test |
+| `QLITE_ANTHROPIC_MODEL` | `claude-haiku-4-5` | Anthropic model for provider test |
+| `QLITE_GOOGLE_MODEL` | `gemini-2.5-flash` | Google model for provider test |
 | `CACHE_HIT_RATE` | `0` | Target cache hit rate (0–100). 0 = all misses, 100 = all hits after warmup. |
 
 ## Go Benchmarks

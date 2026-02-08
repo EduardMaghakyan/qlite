@@ -18,3 +18,19 @@ providers:
       - gpt-4o
       - gpt-4o-mini
       - gpt-4.1-nano
+
+  - name: mock-anthropic
+    type: anthropic
+    base_url: "http://localhost:9999/v1"
+    api_key: mock-key
+    models:
+      - claude-sonnet-4-5
+      - claude-haiku-4-5
+
+  - name: mock-google
+    type: google
+    base_url: "http://localhost:9999/v1beta"
+    api_key: mock-key
+    models:
+      - gemini-2.5-flash
+      - gemini-2.5-pro

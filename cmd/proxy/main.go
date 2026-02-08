@@ -51,6 +51,14 @@ func main() {
 			p := provider.NewOpenAICompat(pc.Name, pc.BaseURL, pc.APIKey, pc.Models)
 			registry.Register(p)
 			logger.Info("registered provider", "name", pc.Name, "models", pc.Models)
+		case "anthropic":
+			p := provider.NewAnthropic(pc.Name, pc.BaseURL, pc.APIKey, pc.Models)
+			registry.Register(p)
+			logger.Info("registered provider", "name", pc.Name, "models", pc.Models)
+		case "google":
+			p := provider.NewGoogle(pc.Name, pc.BaseURL, pc.APIKey, pc.Models)
+			registry.Register(p)
+			logger.Info("registered provider", "name", pc.Name, "models", pc.Models)
 		default:
 			logger.Warn("unknown provider type, skipping", "type", pc.Type, "name", pc.Name)
 		}

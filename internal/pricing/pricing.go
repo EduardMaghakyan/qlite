@@ -21,6 +21,22 @@ var prices = map[string]priceEntry{
 		InputPerToken:  0.10 / 1_000_000,
 		OutputPerToken: 0.40 / 1_000_000,
 	},
+	"claude-sonnet-4-5": {
+		InputPerToken:  3.00 / 1_000_000,
+		OutputPerToken: 15.00 / 1_000_000,
+	},
+	"claude-haiku-4-5": {
+		InputPerToken:  0.80 / 1_000_000,
+		OutputPerToken: 4.00 / 1_000_000,
+	},
+	"gemini-2.5-flash": {
+		InputPerToken:  0.15 / 1_000_000,
+		OutputPerToken: 0.60 / 1_000_000,
+	},
+	"gemini-2.5-pro": {
+		InputPerToken:  1.25 / 1_000_000,
+		OutputPerToken: 10.00 / 1_000_000,
+	},
 }
 
 // Calculate returns the cost in USD for the given model and token counts.
