@@ -8,6 +8,8 @@ cache:
     enabled: ${QLITE_CACHE:-true}
     ttl: 1h
     max_entries: 10000
+  semantic:
+    enabled: false
 
 providers:
   - name: mock-openai

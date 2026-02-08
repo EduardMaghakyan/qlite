@@ -1,3 +1,5 @@
+//go:build ignore
+
 // realtest.go — Integration test against a live proxy + upstream LLM APIs.
 // Measures proxy overhead and cache savings.
 //

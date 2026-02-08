@@ -13,8 +13,10 @@ import (
 
 	"github.com/eduardmaghakyan/qlite/internal/cache"
 	"github.com/eduardmaghakyan/qlite/internal/config"
+	"github.com/eduardmaghakyan/qlite/internal/embedding"
 	"github.com/eduardmaghakyan/qlite/internal/pipeline"
 	"github.com/eduardmaghakyan/qlite/internal/provider"
+	"github.com/eduardmaghakyan/qlite/internal/qdrant"
 	"github.com/eduardmaghakyan/qlite/internal/server"
 	"github.com/eduardmaghakyan/qlite/internal/tokenizer"
 )
@@ -73,11 +75,43 @@ func main() {
 
 	dispatch := pipeline.NewDispatchStage(registry, counter)
 
+	// Build the final stage: either SemanticDispatchStage (wrapping dispatch) or plain dispatch.
+	var finalStage any = dispatch
+	var qdrantClient *qdrant.Client
+	if cfg.Cache.Semantic.Enabled {
+		embClient := embedding.NewClient(
+			cfg.Cache.Semantic.EmbeddingURL,
+			cfg.Cache.Semantic.EmbeddingKey,
+			cfg.Cache.Semantic.EmbeddingModel,
+		)
+		qdrantClient = qdrant.NewClient(
+			cfg.Cache.Semantic.QdrantURL,
+			cfg.Cache.Semantic.QdrantAPIKey,
+			cfg.Cache.Semantic.QdrantCollection,
+		)
+
+		// Best-effort collection creation — warn on failure, don't abort.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := qdrantClient.EnsureCollection(ctx, 1536); err != nil {
+			logger.Warn("failed to ensure qdrant collection, semantic cache disabled", "error", err)
+			cancel()
+		} else {
+			cancel()
+			sc := cache.NewSemanticCache(embClient, qdrantClient, cfg.Cache.Semantic.Threshold)
+			finalStage = pipeline.NewSemanticDispatchStage(sc, dispatch)
+			logger.Info("semantic cache enabled",
+				"threshold", cfg.Cache.Semantic.Threshold,
+				"qdrant_url", cfg.Cache.Semantic.QdrantURL,
+				"embedding_model", cfg.Cache.Semantic.EmbeddingModel,
+			)
+		}
+	}
+
 	var stages []any
 	if exactCache != nil {
 		stages = append(stages, pipeline.NewCacheStage(exactCache, true))
 	}
-	stages = append(stages, dispatch)
+	stages = append(stages, finalStage)
 
 	pipe, err := pipeline.New(stages...)
 	if err != nil {
@@ -88,6 +122,28 @@ func main() {
 	handler := server.NewHandler(pipe, counter, logger, exactCache)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
+
+	mux.HandleFunc("POST /admin/cache/clear", func(w http.ResponseWriter, r *http.Request) {
+		if exactCache != nil {
+			exactCache.Clear()
+		}
+		if qdrantClient != nil {
+			ctx := r.Context()
+			if err := qdrantClient.DeleteCollection(ctx); err != nil {
+				logger.Error("failed to delete qdrant collection", "error", err)
+				http.Error(w, "failed to delete qdrant collection", http.StatusInternalServerError)
+				return
+			}
+			if err := qdrantClient.EnsureCollection(ctx, 1536); err != nil {
+				logger.Error("failed to recreate qdrant collection", "error", err)
+				http.Error(w, "failed to recreate qdrant collection", http.StatusInternalServerError)
+				return
+			}
+		}
+		logger.Info("cache cleared via admin endpoint")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	})
 
 	wrapped := server.Chain(mux,
 		server.RequestID,

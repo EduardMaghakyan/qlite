@@ -8,6 +8,14 @@ cache:
     enabled: true
     ttl: 1h
     max_entries: 10000
+  semantic:
+    enabled: true
+    threshold: 0.95
+    embedding_model: text-embedding-3-small
+    embedding_url: https://api.openai.com/v1
+    embedding_key: ${OPENAI_API_KEY}
+    qdrant_url: http://localhost:6333
+    qdrant_collection: qlite_cache
 
 providers:
   - name: openai

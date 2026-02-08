@@ -60,6 +60,7 @@ func (s *CacheStage) ProcessStream(ctx context.Context, req *model.ProxyRequest,
 	}
 
 	sw.SetHeader("X-Cache", "HIT")
+	sw.SetHeader("X-Provider", "cache")
 
 	if err := sse.WriteResponseAsSSE(sw, entry.Response); err != nil {
 		return nil, err

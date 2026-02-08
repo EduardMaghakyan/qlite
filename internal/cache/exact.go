@@ -98,6 +98,13 @@ func (c *ExactCache) Put(req *model.ChatRequest, resp *model.ChatResponse) {
 	}
 }
 
+// Clear removes all entries from the cache.
+func (c *ExactCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]*Entry)
+}
+
 // Len returns the current number of entries in the cache.
 func (c *ExactCache) Len() int {
 	c.mu.RLock()
