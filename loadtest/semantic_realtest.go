@@ -123,6 +123,7 @@ type result struct {
 	Latency     time.Duration
 	XCache      string
 	Cost        string
+	CostSaved   string
 	TokensSaved string
 	Provider    string
 	StatusCode  int
@@ -152,6 +153,7 @@ func doNonStreamProxy(url, authKey, mdl, content string) (result, error) {
 		Latency:     latency,
 		XCache:      resp.Header.Get("X-Cache"),
 		Cost:        resp.Header.Get("X-Request-Cost"),
+		CostSaved:   resp.Header.Get("X-Cost-Saved"),
 		TokensSaved: resp.Header.Get("X-Tokens-Saved"),
 		Provider:    resp.Header.Get("X-Provider"),
 		StatusCode:  resp.StatusCode,
@@ -449,6 +451,22 @@ func main() {
 	assertProvider("Semantic geo hit", semGeo, "semantic_cache")
 	fmt.Println("  ✓")
 
+	// --- Cost Summary ---
+	fmt.Println("\n--- Cost Summary ---")
+	seedCost := parseFloat(seed.Cost)
+	seed2Cost := parseFloat(seed2.Cost)
+	totalAPICost := seedCost + seed2Cost
+	sem1Saved := parseFloat(sem1.CostSaved)
+	semGeoSaved := parseFloat(semGeo.CostSaved)
+	totalSaved := sem1Saved + semGeoSaved
+
+	fmt.Printf("  Seed API cost:       $%.8f\n", seedCost)
+	fmt.Printf("  Seed 2 API cost:     $%.8f\n", seed2Cost)
+	fmt.Printf("  Total API cost:      $%.8f\n", totalAPICost)
+	fmt.Printf("  Semantic hit 1 saved:$%.8f\n", sem1Saved)
+	fmt.Printf("  Semantic geo saved:  $%.8f\n", semGeoSaved)
+	fmt.Printf("  Total saved:         $%.8f\n", totalSaved)
+
 	// --- Result ---
 	fmt.Println()
 	if passed {
@@ -457,6 +475,11 @@ func main() {
 		fmt.Println("FAIL (some assertions failed)")
 		os.Exit(1)
 	}
+}
+
+func parseFloat(s string) float64 {
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
 }
 
 func fail(format string, args ...any) {

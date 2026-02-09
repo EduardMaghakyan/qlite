@@ -2,6 +2,7 @@
 Semantic cache load test for qlite proxy.
 
 Exercises exact cache, semantic cache, and cache misses at configurable rates.
+Reports hit-rate stats and cost savings summary at the end of the run.
 
 Prerequisites:
   docker run -d -p 6333:6333 qdrant/qdrant
@@ -29,6 +30,7 @@ import random
 import threading
 import time
 
+import requests as req_lib
 from locust import HttpUser, between, task, events
 
 
@@ -43,51 +45,64 @@ HEADERS = {
 }
 
 # ---------------------------------------------------------------------------
+# Clear caches at test start (before any user warmup)
+# ---------------------------------------------------------------------------
+
+
+@events.test_start.add_listener
+def on_test_start(environment, **kwargs):
+    """Clear exact cache and Qdrant collection before test begins."""
+    host = environment.host or "http://localhost:8080"
+    try:
+        resp = req_lib.post(f"{host}/admin/cache/clear")
+        if resp.status_code == 200:
+            print("[setup] Caches cleared successfully")
+        else:
+            print(f"[setup] WARNING: cache clear failed (status {resp.status_code})")
+    except Exception as e:
+        print(f"[setup] WARNING: cache clear request failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Message pools
 # ---------------------------------------------------------------------------
 
 # Semantic pool: (seed_message, [variant_messages])
 # Seeds are sent during warmup to populate both exact and semantic caches.
-# Variants are sent during load to trigger semantic cache hits.
+# Variants are close paraphrases to reliably hit at 0.95 threshold.
 SEMANTIC_POOL = [
     (
-        "Say hello in exactly 3 words",
+        "Say hello in exactly three words",
         [
-            "Greet me using three words",
-            "Give me a 3-word greeting",
-            "Say hi in 3 words",
+            "Say hello in precisely three words",
+            "Say hello using exactly three words",
         ],
     ),
     (
         "What is the capital of France?",
         [
-            "Tell me the capital city of France",
-            "Which city is the capital of France?",
-            "Name the French capital",
+            "What is the capital city of France?",
         ],
     ),
     (
         "Count from 1 to 5",
         [
-            "List the numbers 1 through 5",
-            "Give me the numbers one to five",
-            "Enumerate 1 to 5",
+            "Count from one to five",
+            "Count from 1 up to 5",
         ],
     ),
     (
         "What color is the sky?",
         [
-            "Tell me the color of the sky",
-            "What colour is the sky on a clear day?",
-            "Describe the sky's color",
+            "What colour is the sky?",
+            "What color is the sky on a clear day?",
         ],
     ),
     (
         "Name three fruits",
         [
-            "List 3 fruits",
-            "Give me three fruit names",
-            "What are three common fruits?",
+            "Name 3 fruits",
+            "Name three common fruits",
         ],
     ),
 ]
@@ -101,6 +116,20 @@ EXACT_POOL = [
 # ---------------------------------------------------------------------------
 # Thread-safe counters
 # ---------------------------------------------------------------------------
+
+# Topically distinct messages so misses don't semantically match each other.
+MISS_TOPICS = [
+    "Explain the Pythagorean theorem",
+    "What is photosynthesis?",
+    "Describe the water cycle",
+    "Who invented the telephone?",
+    "What is the speed of light?",
+    "Define opportunity cost",
+    "What causes earthquakes?",
+    "Explain how vaccines work",
+    "What is the Fibonacci sequence?",
+    "Describe the structure of DNA",
+]
 
 _miss_counter = 0
 _miss_lock = threading.Lock()
@@ -117,16 +146,29 @@ def next_miss_id():
 _exact_hits = 0
 _semantic_hits = 0
 _misses = 0
+
+# Cost accumulators.
+_total_cost = 0.0
+_total_saved = 0.0
+_exact_saved = 0.0
+_semantic_saved = 0.0
+
 _stats_lock = threading.Lock()
 
 
-def record_result(cache_header, provider_header):
+def record_result(cache_header, provider_header, cost, cost_saved):
     global _exact_hits, _semantic_hits, _misses
+    global _total_cost, _total_saved, _exact_saved, _semantic_saved
     with _stats_lock:
+        _total_cost += cost
         if cache_header == "HIT" and provider_header == "semantic_cache":
             _semantic_hits += 1
+            _total_saved += cost_saved
+            _semantic_saved += cost_saved
         elif cache_header == "HIT" and provider_header == "cache":
             _exact_hits += 1
+            _total_saved += cost_saved
+            _exact_saved += cost_saved
         else:
             _misses += 1
 
@@ -154,6 +196,17 @@ def on_test_stop(environment, **kwargs):
     print(f"Misses:        {_misses} ({_misses / total * 100:.1f}%)")
     print(f"Total:         {total}")
     print("===============================\n")
+
+    cost_without_cache = _total_cost + _total_saved
+    savings_pct = (_total_saved / cost_without_cache * 100) if cost_without_cache > 0 else 0.0
+    print("=== Cost Savings Summary ===")
+    print(f"Total API cost (actual):    ${_total_cost:.8f}")
+    print(f"Saved by exact cache:       ${_exact_saved:.8f}  ({_exact_hits} hits)")
+    print(f"Saved by semantic cache:    ${_semantic_saved:.8f}  ({_semantic_hits} hits)")
+    print(f"Total saved:                ${_total_saved:.8f}")
+    print(f"Cost without cache:         ${cost_without_cache:.8f}")
+    print(f"Savings:                    {savings_pct:.1f}%")
+    print("============================\n")
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +266,10 @@ class SemanticCacheUser(HttpUser):
             messages = [{"role": "user", "content": variant}]
             req_name = "[cache-semantic-HIT]"
         else:
-            # Cache miss — unique message.
+            # Cache miss — topically distinct message so misses don't match each other.
             uid = next_miss_id()
-            messages = [{"role": "user", "content": f"Unique miss message {uid}"}]
+            topic = MISS_TOPICS[uid % len(MISS_TOPICS)]
+            messages = [{"role": "user", "content": f"{topic} (variant {uid})"}]
             req_name = "[cache-MISS]"
 
         payload = {
@@ -234,12 +288,14 @@ class SemanticCacheUser(HttpUser):
             if resp.status_code == 200:
                 cache_header = resp.headers.get("X-Cache", "MISS")
                 provider_header = resp.headers.get("X-Provider", "")
-                record_result(cache_header, provider_header)
+                cost = float(resp.headers.get("X-Request-Cost", "0"))
+                cost_saved = float(resp.headers.get("X-Cost-Saved", "0"))
+                record_result(cache_header, provider_header, cost, cost_saved)
                 body = resp.json()
                 if "choices" not in body or len(body["choices"]) == 0:
                     resp.failure("No choices in response")
                 else:
                     resp.success()
             else:
-                record_result("MISS", "")
+                record_result("MISS", "", 0.0, 0.0)
                 resp.failure(f"Status {resp.status_code}: {resp.text[:200]}")

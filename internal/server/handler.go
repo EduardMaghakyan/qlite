@@ -12,6 +12,7 @@ import (
 	"github.com/eduardmaghakyan/qlite/internal/cache"
 	"github.com/eduardmaghakyan/qlite/internal/model"
 	"github.com/eduardmaghakyan/qlite/internal/pipeline"
+	"github.com/eduardmaghakyan/qlite/internal/pricing"
 	"github.com/eduardmaghakyan/qlite/internal/sse"
 	"github.com/eduardmaghakyan/qlite/internal/tokenizer"
 )
@@ -105,6 +106,8 @@ func (h *Handler) handleNonStreaming(w http.ResponseWriter, r *http.Request, pro
 	if resp.CacheStatus == "HIT" {
 		totalTokens := resp.ChatResponse.Usage.PromptTokens + resp.ChatResponse.Usage.CompletionTokens
 		w.Header().Set("X-Tokens-Saved", strconv.Itoa(totalTokens))
+		costSaved := pricing.Calculate(proxyReq.ChatRequest.Model, resp.ChatResponse.Usage.PromptTokens, resp.ChatResponse.Usage.CompletionTokens)
+		w.Header().Set("X-Cost-Saved", strconv.FormatFloat(costSaved, 'f', 8, 64))
 	}
 
 	if err := json.NewEncoder(w).Encode(resp.ChatResponse); err != nil {

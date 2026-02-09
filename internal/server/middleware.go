@@ -104,7 +104,7 @@ func CORS(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Request-Cost, X-Tokens-Input, X-Tokens-Output, X-Cache")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Request-Cost, X-Tokens-Input, X-Tokens-Output, X-Cache, X-Cost-Saved, X-Provider")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
