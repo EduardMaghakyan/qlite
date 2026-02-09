@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,10 @@ import (
 
 	"github.com/eduardmaghakyan/qlite/internal/model"
 )
+
+var keyBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
 
 // Entry holds a cached response with its expiration time.
 type Entry struct {
@@ -58,8 +63,11 @@ func KeyFor(req *model.ChatRequest) string {
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 	}
-	data, _ := json.Marshal(k)
-	h := sha256.Sum256(data)
+	buf := keyBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	json.NewEncoder(buf).Encode(k)
+	h := sha256.Sum256(buf.Bytes())
+	keyBufPool.Put(buf)
 	return hex.EncodeToString(h[:])
 }
 

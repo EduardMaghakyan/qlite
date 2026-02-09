@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/eduardmaghakyan/qlite/internal/model"
@@ -110,6 +111,7 @@ func (g *Google) convertRequest(req *model.ChatRequest) *geminiRequest {
 		gr.GenerationConfig = &genConfig
 	}
 
+	gr.Contents = make([]geminiContent, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		if msg.Role == "system" {
 			gr.SystemInstruction = &geminiSystemInstruction{
@@ -177,7 +179,7 @@ func (g *Google) Chat(ctx context.Context, req *model.ChatRequest) (*model.ChatR
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -206,7 +208,7 @@ func (g *Google) Chat(ctx context.Context, req *model.ChatRequest) (*model.ChatR
 	}
 
 	return &model.ChatResponse{
-		ID:      fmt.Sprintf("gen-%d", time.Now().UnixNano()),
+		ID:      "gen-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   req.Model,
@@ -248,11 +250,11 @@ func (g *Google) ChatStream(ctx context.Context, req *model.ChatRequest, sw sse.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	genID := fmt.Sprintf("gen-%d", time.Now().UnixNano())
+	genID := "gen-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	created := time.Now().Unix()
 	var usage model.Usage
 	first := true

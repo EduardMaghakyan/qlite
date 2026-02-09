@@ -83,7 +83,7 @@ func (o *OpenAICompat) Chat(ctx context.Context, req *model.ChatRequest) (*model
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
@@ -121,7 +121,7 @@ func (o *OpenAICompat) ChatStream(ctx context.Context, req *model.ChatRequest, s
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 

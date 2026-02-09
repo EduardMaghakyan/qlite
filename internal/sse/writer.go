@@ -1,9 +1,15 @@
 package sse
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"sync"
 )
+
+var jsonBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
 
 // Writer writes Server-Sent Events to an HTTP response.
 type Writer interface {
@@ -62,9 +68,18 @@ func (s *writer) Done() error {
 
 // WriteJSON marshals v to JSON and sends it as an SSE event.
 func WriteJSON(sw Writer, v any) error {
-	data, err := json.Marshal(v)
-	if err != nil {
+	buf := jsonBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	if err := json.NewEncoder(buf).Encode(v); err != nil {
+		jsonBufPool.Put(buf)
 		return err
 	}
-	return sw.WriteEvent(data)
+	b := buf.Bytes()
+	// json.Encoder.Encode appends a trailing newline; trim it.
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	err := sw.WriteEvent(b)
+	jsonBufPool.Put(buf)
+	return err
 }

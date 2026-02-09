@@ -82,6 +82,9 @@ func (s *SemanticCache) Store(ctx context.Context, req *model.ChatRequest, resp 
 
 // pointIDFromText generates a deterministic ID from model and precomputed text.
 func pointIDFromText(modelName, text string) string {
-	h := sha256.Sum256([]byte(modelName + ":" + text))
-	return hex.EncodeToString(h[:16]) // 128-bit hex string
+	h := sha256.New()
+	h.Write([]byte(modelName))
+	h.Write([]byte(":"))
+	h.Write([]byte(text))
+	return hex.EncodeToString(h.Sum(nil)[:16]) // 128-bit hex string
 }
