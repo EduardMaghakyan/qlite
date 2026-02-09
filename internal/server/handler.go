@@ -48,6 +48,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB limit
 	var chatReq model.ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body: "+err.Error())
@@ -145,7 +146,7 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, proxyR
 func extractAPIKey(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
-		return strings.TrimPrefix(auth, "Bearer ")
+		return auth[7:]
 	}
 	return ""
 }

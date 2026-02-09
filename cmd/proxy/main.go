@@ -158,6 +158,7 @@ func main() {
 		ReadTimeout:       cfg.Server.ReadTimeout,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {

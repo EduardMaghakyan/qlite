@@ -25,7 +25,7 @@ type lruEntry struct {
 
 // ExactCache is an in-memory LRU cache keyed by SHA-256 of (model, messages, temperature, top_p).
 type ExactCache struct {
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	items      map[string]*list.Element
 	order      *list.List // front = most recently used, back = least recently used
 	ttl        time.Duration
@@ -135,8 +135,8 @@ func (c *ExactCache) Clear() {
 
 // Len returns the current number of entries in the cache.
 func (c *ExactCache) Len() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.order.Len()
 }
 

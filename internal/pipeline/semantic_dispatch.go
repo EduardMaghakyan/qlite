@@ -150,7 +150,7 @@ func (s *SemanticDispatchStage) ProcessStream(ctx context.Context, req *model.Pr
 
 	// Create a gated writer: dispatch writes go through this, but if semantic
 	// wins first, we block dispatch from writing and replay the cached response.
-	gw := &gatedWriter{inner: sw}
+	gw := &gatedWriter{inner: sw, gate: make(chan struct{})}
 
 	type dispatchResult struct {
 		resp *model.ProxyResponse
@@ -234,9 +234,6 @@ type gatedWriter struct {
 // Returns true if writes should proceed, false if they should be discarded.
 func (g *gatedWriter) waitForGate() bool {
 	g.mu.Lock()
-	if g.gate == nil {
-		g.gate = make(chan struct{})
-	}
 	gate := g.gate
 	g.mu.Unlock()
 
@@ -259,9 +256,6 @@ func (g *gatedWriter) claim() bool {
 		return false
 	}
 	g.claimed = true
-	if g.gate == nil {
-		g.gate = make(chan struct{})
-	}
 	select {
 	case <-g.gate:
 	default:
@@ -274,9 +268,6 @@ func (g *gatedWriter) claim() bool {
 func (g *gatedWriter) release() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.gate == nil {
-		g.gate = make(chan struct{})
-	}
 	select {
 	case <-g.gate:
 	default:

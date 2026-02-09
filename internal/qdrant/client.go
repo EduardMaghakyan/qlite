@@ -8,10 +8,15 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eduardmaghakyan/qlite/internal/model"
 )
+
+var bufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
 
 // CachedPayload is the data stored alongside each vector in Qdrant.
 type CachedPayload struct {
@@ -59,13 +64,15 @@ func (c *Client) EnsureCollection(ctx context.Context, vectorSize int) error {
 			"distance": "Cosine",
 		},
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+	if err := json.NewEncoder(buf).Encode(body); err != nil {
 		return fmt.Errorf("marshaling collection config: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		c.baseURL+"/collections/"+c.collection, bytes.NewReader(data))
+		c.baseURL+"/collections/"+c.collection, bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		return fmt.Errorf("creating collection request: %w", err)
 	}
@@ -76,7 +83,7 @@ func (c *Client) EnsureCollection(ctx context.Context, vectorSize int) error {
 		return fmt.Errorf("creating collection: %w", err)
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	io.Copy(io.Discard, resp.Body)
 
 	// 200 = created, 409 = already exists — both are fine.
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
@@ -132,13 +139,15 @@ func (c *Client) Search(ctx context.Context, vector []float32, limit int, scoreT
 		}
 	}
 
-	data, err := json.Marshal(body)
-	if err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+	if err := json.NewEncoder(buf).Encode(body); err != nil {
 		return nil, fmt.Errorf("marshaling search request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/collections/"+c.collection+"/points/search", bytes.NewReader(data))
+		c.baseURL+"/collections/"+c.collection+"/points/search", bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}
@@ -193,13 +202,15 @@ func (c *Client) Upsert(ctx context.Context, id string, vector []float32, payloa
 		},
 	}
 
-	data, err := json.Marshal(body)
-	if err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+	if err := json.NewEncoder(buf).Encode(body); err != nil {
 		return fmt.Errorf("marshaling upsert request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		c.baseURL+"/collections/"+c.collection+"/points", bytes.NewReader(data))
+		c.baseURL+"/collections/"+c.collection+"/points", bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		return fmt.Errorf("creating upsert request: %w", err)
 	}
@@ -210,7 +221,7 @@ func (c *Client) Upsert(ctx context.Context, id string, vector []float32, payloa
 		return fmt.Errorf("upserting to qdrant: %w", err)
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("qdrant upsert error (status %d)", resp.StatusCode)
@@ -232,7 +243,7 @@ func (c *Client) DeleteCollection(ctx context.Context) error {
 		return fmt.Errorf("deleting collection: %w", err)
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status deleting collection: %d", resp.StatusCode)

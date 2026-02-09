@@ -133,11 +133,11 @@ func (g *Google) convertRequest(req *model.ChatRequest) *geminiRequest {
 }
 
 func (g *Google) chatURL(modelName string) string {
-	return fmt.Sprintf("%s/models/%s:generateContent?key=%s", g.baseURL, modelName, g.apiKey)
+	return g.baseURL + "/models/" + modelName + ":generateContent?key=" + g.apiKey
 }
 
 func (g *Google) streamURL(modelName string) string {
-	return fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", g.baseURL, modelName, g.apiKey)
+	return g.baseURL + "/models/" + modelName + ":streamGenerateContent?alt=sse&key=" + g.apiKey
 }
 
 func geminiFinishReason(reason string) string {

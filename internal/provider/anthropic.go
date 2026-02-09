@@ -15,6 +15,14 @@ import (
 	"github.com/eduardmaghakyan/qlite/internal/sse"
 )
 
+// Anthropic SSE event type byte slices for zero-alloc comparison.
+var (
+	eventMessageStart     = []byte("message_start")
+	eventContentBlockDelta = []byte("content_block_delta")
+	eventMessageDelta     = []byte("message_delta")
+	eventMessageStop      = []byte("message_stop")
+)
+
 // Anthropic is a provider that speaks the Anthropic Messages API.
 type Anthropic struct {
 	name    string
@@ -253,15 +261,17 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 	var usage model.Usage
 	var msgID string
 	var modelName string
-	var eventType string
+	var curEvent []byte
+
+	eventPrefix := []byte("event: ")
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
 		// Parse event type lines.
-		if bytes.HasPrefix(line, []byte("event: ")) {
-			eventType = string(line[7:])
+		if bytes.HasPrefix(line, eventPrefix) {
+			curEvent = line[7:]
 			continue
 		}
 
@@ -271,8 +281,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 		}
 		data := line[len(dataPrefix):]
 
-		switch eventType {
-		case "message_start":
+		if bytes.Equal(curEvent, eventMessageStart) {
 			var ms anthropicMessageStart
 			if err := json.Unmarshal(data, &ms); err != nil {
 				continue
@@ -293,8 +302,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 			if err := sse.WriteJSON(sw, chunk); err != nil {
 				return &usage, fmt.Errorf("writing event: %w", err)
 			}
-
-		case "content_block_delta":
+		} else if bytes.Equal(curEvent, eventContentBlockDelta) {
 			var cbd anthropicContentBlockDelta
 			if err := json.Unmarshal(data, &cbd); err != nil {
 				continue
@@ -312,8 +320,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 			if err := sse.WriteJSON(sw, chunk); err != nil {
 				return &usage, fmt.Errorf("writing event: %w", err)
 			}
-
-		case "message_delta":
+		} else if bytes.Equal(curEvent, eventMessageDelta) {
 			var md anthropicMessageDelta
 			if err := json.Unmarshal(data, &md); err != nil {
 				continue
@@ -337,8 +344,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 			if err := sse.WriteJSON(sw, chunk); err != nil {
 				return &usage, fmt.Errorf("writing event: %w", err)
 			}
-
-		case "message_stop":
+		} else if bytes.Equal(curEvent, eventMessageStop) {
 			if err := sw.Done(); err != nil {
 				return &usage, fmt.Errorf("writing done: %w", err)
 			}

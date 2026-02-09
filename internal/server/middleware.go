@@ -49,7 +49,7 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", sw.status,
-				"duration", time.Since(start).String(),
+				"duration", time.Since(start),
 				"request_id", GetRequestID(r.Context()),
 			)
 			sw.ResponseWriter = nil
