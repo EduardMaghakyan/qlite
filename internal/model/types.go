@@ -86,6 +86,7 @@ type ProxyRequest struct {
 	ReceivedAt     time.Time
 	InputTokens    int
 	APIKey         string
+	CacheKey       string // precomputed exact-cache key, set by CacheStage
 }
 
 // ProxyResponse wraps a ChatResponse with proxy-specific metadata.

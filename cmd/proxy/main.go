@@ -98,7 +98,7 @@ func main() {
 		} else {
 			cancel()
 			sc := cache.NewSemanticCache(embClient, qdrantClient, cfg.Cache.Semantic.Threshold)
-			finalStage = pipeline.NewSemanticDispatchStage(sc, dispatch)
+			finalStage = pipeline.NewSemanticDispatchStage(sc, dispatch, logger)
 			logger.Info("semantic cache enabled",
 				"threshold", cfg.Cache.Semantic.Threshold,
 				"qdrant_url", cfg.Cache.Semantic.QdrantURL,

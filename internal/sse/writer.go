@@ -16,8 +16,9 @@ type Writer interface {
 }
 
 type writer struct {
-	w  http.ResponseWriter
-	rc *http.ResponseController
+	w   http.ResponseWriter
+	rc  *http.ResponseController
+	buf []byte // reusable buffer for WriteEvent framing
 }
 
 // NewWriter creates a new SSE Writer wrapping the given ResponseWriter.
@@ -38,11 +39,15 @@ func (s *writer) SetHeader(key, value string) {
 }
 
 func (s *writer) WriteEvent(data []byte) error {
-	buf := make([]byte, 0, 6+len(data)+2) // "data: " + data + "\n\n"
-	buf = append(buf, "data: "...)
-	buf = append(buf, data...)
-	buf = append(buf, '\n', '\n')
-	if _, err := s.w.Write(buf); err != nil {
+	needed := 6 + len(data) + 2 // "data: " + data + "\n\n"
+	if cap(s.buf) < needed {
+		s.buf = make([]byte, 0, needed)
+	}
+	s.buf = s.buf[:0]
+	s.buf = append(s.buf, "data: "...)
+	s.buf = append(s.buf, data...)
+	s.buf = append(s.buf, '\n', '\n')
+	if _, err := s.w.Write(s.buf); err != nil {
 		return err
 	}
 	return s.rc.Flush()

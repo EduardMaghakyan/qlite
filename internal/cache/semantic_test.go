@@ -51,7 +51,7 @@ func TestSemanticCache_Lookup_Hit(t *testing.T) {
 		Messages: []model.Message{{Role: "user", Content: "Hello"}},
 	}
 
-	resp, emb, err := sc.Lookup(context.Background(), req)
+	resp, emb, text, err := sc.Lookup(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,6 +63,9 @@ func TestSemanticCache_Lookup_Hit(t *testing.T) {
 	}
 	if emb == nil {
 		t.Error("expected embedding to be returned")
+	}
+	if text == "" {
+		t.Error("expected text to be returned")
 	}
 }
 
@@ -92,7 +95,7 @@ func TestSemanticCache_Lookup_Miss(t *testing.T) {
 		Messages: []model.Message{{Role: "user", Content: "Hello"}},
 	}
 
-	resp, emb, err := sc.Lookup(context.Background(), req)
+	resp, emb, text, err := sc.Lookup(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,6 +104,9 @@ func TestSemanticCache_Lookup_Miss(t *testing.T) {
 	}
 	if emb == nil {
 		t.Error("expected embedding even on miss")
+	}
+	if text == "" {
+		t.Error("expected text even on miss")
 	}
 }
 
@@ -120,7 +126,7 @@ func TestSemanticCache_Lookup_EmbeddingError(t *testing.T) {
 		Messages: []model.Message{{Role: "user", Content: "Hello"}},
 	}
 
-	resp, emb, err := sc.Lookup(context.Background(), req)
+	resp, emb, _, err := sc.Lookup(context.Background(), req)
 	if err != nil {
 		t.Fatalf("expected nil error for graceful fallthrough, got: %v", err)
 	}
@@ -157,7 +163,7 @@ func TestSemanticCache_Store(t *testing.T) {
 	}
 	resp := &model.ChatResponse{ID: "resp-1"}
 
-	err := sc.Store(context.Background(), req, resp, []float32{0.1, 0.2, 0.3})
+	err := sc.Store(context.Background(), req, resp, []float32{0.1, 0.2, 0.3}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

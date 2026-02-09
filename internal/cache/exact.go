@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,10 +17,17 @@ type Entry struct {
 	ExpiresAt time.Time
 }
 
-// ExactCache is an in-memory cache keyed by SHA-256 of (model, messages, temperature, top_p).
+// lruEntry wraps an Entry with its cache key for O(1) eviction.
+type lruEntry struct {
+	key   string
+	entry *Entry
+}
+
+// ExactCache is an in-memory LRU cache keyed by SHA-256 of (model, messages, temperature, top_p).
 type ExactCache struct {
 	mu         sync.RWMutex
-	entries    map[string]*Entry
+	items      map[string]*list.Element
+	order      *list.List // front = most recently used, back = least recently used
 	ttl        time.Duration
 	maxEntries int
 }
@@ -27,7 +35,8 @@ type ExactCache struct {
 // New creates a new ExactCache with the given TTL and max entry count.
 func New(ttl time.Duration, maxEntries int) *ExactCache {
 	return &ExactCache{
-		entries:    make(map[string]*Entry),
+		items:      make(map[string]*list.Element),
+		order:      list.New(),
 		ttl:        ttl,
 		maxEntries: maxEntries,
 	}
@@ -41,8 +50,8 @@ type cacheKey struct {
 	TopP        *float64        `json:"top_p,omitempty"`
 }
 
-// keyFor computes a SHA-256 hex string from the cache-relevant fields of a request.
-func keyFor(req *model.ChatRequest) string {
+// KeyFor computes a SHA-256 hex string from the cache-relevant fields of a request.
+func KeyFor(req *model.ChatRequest) string {
 	k := cacheKey{
 		Model:       req.Model,
 		Messages:    req.Messages,
@@ -56,75 +65,88 @@ func keyFor(req *model.ChatRequest) string {
 
 // Get looks up a cached response. Returns nil if not found or expired.
 func (c *ExactCache) Get(req *model.ChatRequest) (*Entry, bool) {
-	key := keyFor(req)
+	return c.GetByKey(KeyFor(req))
+}
 
-	c.mu.RLock()
-	entry, ok := c.entries[key]
-	c.mu.RUnlock()
-
+// GetByKey looks up a cached response by precomputed key. Returns nil if not found or expired.
+func (c *ExactCache) GetByKey(key string) (*Entry, bool) {
+	c.mu.Lock()
+	elem, ok := c.items[key]
 	if !ok {
-		return nil, false
-	}
-
-	if time.Now().After(entry.ExpiresAt) {
-		// Lazy eviction of expired entry.
-		c.mu.Lock()
-		// Double-check under write lock.
-		if e, ok := c.entries[key]; ok && time.Now().After(e.ExpiresAt) {
-			delete(c.entries, key)
-		}
 		c.mu.Unlock()
 		return nil, false
 	}
 
+	le := elem.Value.(*lruEntry)
+	if time.Now().After(le.entry.ExpiresAt) {
+		// Expired — remove under write lock.
+		c.order.Remove(elem)
+		delete(c.items, key)
+		c.mu.Unlock()
+		return nil, false
+	}
+
+	// Move to front (most recently used).
+	c.order.MoveToFront(elem)
+	entry := le.entry
+	c.mu.Unlock()
 	return entry, true
 }
 
-// Put stores a response in the cache. If at capacity, the oldest entry is evicted.
+// Put stores a response in the cache. If at capacity, the least recently used entry is evicted.
 func (c *ExactCache) Put(req *model.ChatRequest, resp *model.ChatResponse) {
-	key := keyFor(req)
+	c.PutByKey(KeyFor(req), resp)
+}
 
+// PutByKey stores a response using a precomputed key.
+func (c *ExactCache) PutByKey(key string, resp *model.ChatResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Evict oldest if at capacity and this is a new key.
-	if _, exists := c.entries[key]; !exists && len(c.entries) >= c.maxEntries {
-		c.evictOldest()
-	}
-
-	c.entries[key] = &Entry{
+	entry := &Entry{
 		Response:  resp,
 		ExpiresAt: time.Now().Add(c.ttl),
 	}
+
+	if elem, ok := c.items[key]; ok {
+		// Update existing entry, move to front.
+		elem.Value.(*lruEntry).entry = entry
+		c.order.MoveToFront(elem)
+		return
+	}
+
+	// Evict LRU if at capacity.
+	if c.order.Len() >= c.maxEntries {
+		c.evictLRU()
+	}
+
+	le := &lruEntry{key: key, entry: entry}
+	elem := c.order.PushFront(le)
+	c.items[key] = elem
 }
 
 // Clear removes all entries from the cache.
 func (c *ExactCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = make(map[string]*Entry)
+	c.items = make(map[string]*list.Element)
+	c.order.Init()
 }
 
 // Len returns the current number of entries in the cache.
 func (c *ExactCache) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.entries)
+	return c.order.Len()
 }
 
-// evictOldest removes the entry with the earliest ExpiresAt. Must be called under write lock.
-func (c *ExactCache) evictOldest() {
-	var oldestKey string
-	var oldestTime time.Time
-
-	for k, e := range c.entries {
-		if oldestKey == "" || e.ExpiresAt.Before(oldestTime) {
-			oldestKey = k
-			oldestTime = e.ExpiresAt
-		}
+// evictLRU removes the least recently used entry. Must be called under write lock.
+func (c *ExactCache) evictLRU() {
+	back := c.order.Back()
+	if back == nil {
+		return
 	}
-
-	if oldestKey != "" {
-		delete(c.entries, oldestKey)
-	}
+	le := back.Value.(*lruEntry)
+	c.order.Remove(back)
+	delete(c.items, le.key)
 }

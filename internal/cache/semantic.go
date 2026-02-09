@@ -29,36 +29,40 @@ func NewSemanticCache(embedder *embedding.Client, q *qdrant.Client, threshold fl
 }
 
 // Lookup embeds the request and searches Qdrant for a similar cached response.
-// Returns (response, embedding, error). On any failure, returns (nil, nil, nil) for graceful fallthrough.
-// The embedding is returned so Store() can reuse it without recomputing.
-func (s *SemanticCache) Lookup(ctx context.Context, req *model.ChatRequest) (*model.ChatResponse, []float32, error) {
+// Returns (response, embedding, text, error). On any failure, returns (nil, nil, "", nil) for graceful fallthrough.
+// The embedding and text are returned so Store() can reuse them without recomputing.
+func (s *SemanticCache) Lookup(ctx context.Context, req *model.ChatRequest) (*model.ChatResponse, []float32, string, error) {
 	text := embedding.TextFromMessages(req.Messages)
 
 	emb, err := s.embedder.Embed(ctx, text)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, "", nil
 	}
 
 	results, err := s.qdrant.Search(ctx, emb, 1, s.threshold, req.Model)
 	if err != nil {
-		return nil, emb, nil
+		return nil, emb, text, nil
 	}
 
 	if len(results) > 0 && results[0].Payload != nil && results[0].Payload.Response != nil {
-		return results[0].Payload.Response, emb, nil
+		return results[0].Payload.Response, emb, text, nil
 	}
 
-	return nil, emb, nil
+	return nil, emb, text, nil
 }
 
 // Store saves a response in Qdrant for future semantic lookups.
 // If emb is non-nil it is reused; otherwise a fresh embedding is computed.
-func (s *SemanticCache) Store(ctx context.Context, req *model.ChatRequest, resp *model.ChatResponse, emb []float32) error {
+// If text is non-empty it is reused for the point ID; otherwise it is recomputed.
+func (s *SemanticCache) Store(ctx context.Context, req *model.ChatRequest, resp *model.ChatResponse, emb []float32, text string) error {
+	if text == "" {
+		text = embedding.TextFromMessages(req.Messages)
+	}
+
 	if emb == nil {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		text := embedding.TextFromMessages(req.Messages)
 		var err error
 		emb, err = s.embedder.Embed(ctx, text)
 		if err != nil {
@@ -66,7 +70,7 @@ func (s *SemanticCache) Store(ctx context.Context, req *model.ChatRequest, resp 
 		}
 	}
 
-	id := pointID(req)
+	id := pointIDFromText(req.Model, text)
 	payload := &qdrant.CachedPayload{
 		Response:  resp,
 		Model:     req.Model,
@@ -76,9 +80,8 @@ func (s *SemanticCache) Store(ctx context.Context, req *model.ChatRequest, resp 
 	return s.qdrant.Upsert(ctx, id, emb, payload)
 }
 
-// pointID generates a deterministic ID for a request based on its content hash.
-func pointID(req *model.ChatRequest) string {
-	text := embedding.TextFromMessages(req.Messages)
-	h := sha256.Sum256([]byte(req.Model + ":" + text))
+// pointIDFromText generates a deterministic ID from model and precomputed text.
+func pointIDFromText(modelName, text string) string {
+	h := sha256.Sum256([]byte(modelName + ":" + text))
 	return hex.EncodeToString(h[:16]) // 128-bit hex string
 }

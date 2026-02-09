@@ -93,7 +93,11 @@ func (h *Handler) handleNonStreaming(w http.ResponseWriter, r *http.Request, pro
 
 	// Store in cache on miss.
 	if h.cache != nil && resp.CacheStatus == "MISS" {
-		h.cache.Put(&proxyReq.ChatRequest, resp.ChatResponse)
+		if proxyReq.CacheKey != "" {
+			h.cache.PutByKey(proxyReq.CacheKey, resp.ChatResponse)
+		} else {
+			h.cache.Put(&proxyReq.ChatRequest, resp.ChatResponse)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -33,7 +33,10 @@ func (s *CacheStage) Process(ctx context.Context, req *model.ProxyRequest) (*mod
 		return nil, nil
 	}
 
-	entry, ok := s.cache.Get(&req.ChatRequest)
+	key := cache.KeyFor(&req.ChatRequest)
+	req.CacheKey = key
+
+	entry, ok := s.cache.GetByKey(key)
 	if !ok {
 		return nil, nil
 	}
@@ -54,7 +57,10 @@ func (s *CacheStage) ProcessStream(ctx context.Context, req *model.ProxyRequest,
 		return nil, nil
 	}
 
-	entry, ok := s.cache.Get(&req.ChatRequest)
+	key := cache.KeyFor(&req.ChatRequest)
+	req.CacheKey = key
+
+	entry, ok := s.cache.GetByKey(key)
 	if !ok {
 		return nil, nil
 	}

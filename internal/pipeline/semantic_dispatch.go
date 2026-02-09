@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"github.com/eduardmaghakyan/qlite/internal/cache"
@@ -16,13 +17,15 @@ import (
 type SemanticDispatchStage struct {
 	semantic *cache.SemanticCache
 	dispatch *DispatchStage
+	logger   *slog.Logger
 }
 
 // NewSemanticDispatchStage creates a stage that races semantic cache against dispatch.
-func NewSemanticDispatchStage(semantic *cache.SemanticCache, dispatch *DispatchStage) *SemanticDispatchStage {
+func NewSemanticDispatchStage(semantic *cache.SemanticCache, dispatch *DispatchStage, logger *slog.Logger) *SemanticDispatchStage {
 	return &SemanticDispatchStage{
 		semantic: semantic,
 		dispatch: dispatch,
+		logger:   logger,
 	}
 }
 
@@ -31,6 +34,7 @@ func (s *SemanticDispatchStage) Name() string { return "semantic_dispatch" }
 type raceResult struct {
 	resp *model.ProxyResponse
 	emb  []float32
+	text string
 	err  error
 	from string
 }
@@ -48,7 +52,7 @@ func (s *SemanticDispatchStage) Process(ctx context.Context, req *model.ProxyReq
 
 	// Semantic path
 	go func() {
-		resp, emb, err := s.semantic.Lookup(ctx, &req.ChatRequest)
+		resp, emb, text, err := s.semantic.Lookup(ctx, &req.ChatRequest)
 		if resp != nil {
 			ch <- raceResult{
 				resp: &model.ProxyResponse{
@@ -59,10 +63,11 @@ func (s *SemanticDispatchStage) Process(ctx context.Context, req *model.ProxyReq
 					ProviderName: "semantic_cache",
 				},
 				emb:  emb,
+				text: text,
 				from: "semantic",
 			}
 		} else {
-			ch <- raceResult{emb: emb, err: err, from: "semantic"}
+			ch <- raceResult{emb: emb, text: text, err: err, from: "semantic"}
 		}
 	}()
 
@@ -74,6 +79,7 @@ func (s *SemanticDispatchStage) Process(ctx context.Context, req *model.ProxyReq
 
 	var dispatchResult *raceResult
 	var semanticEmb []float32
+	var semanticText string
 
 	for i := 0; i < 2; i++ {
 		r := <-ch
@@ -85,6 +91,7 @@ func (s *SemanticDispatchStage) Process(ctx context.Context, req *model.ProxyReq
 				return r.resp, nil
 			}
 			semanticEmb = r.emb
+			semanticText = r.text
 		case "dispatch":
 			rCopy := r
 			dispatchResult = &rCopy
@@ -105,7 +112,12 @@ func (s *SemanticDispatchStage) Process(ctx context.Context, req *model.ProxyReq
 		resp := dispatchResult.resp.ChatResponse
 		chatReq := req.ChatRequest
 		emb := semanticEmb
-		go s.semantic.Store(context.Background(), &chatReq, resp, emb)
+		text := semanticText
+		go func() {
+			if err := s.semantic.Store(context.Background(), &chatReq, resp, emb, text); err != nil {
+				s.logger.Warn("async semantic store failed", "error", err)
+			}
+		}()
 	}
 
 	return dispatchResult.resp, nil
@@ -125,14 +137,15 @@ func (s *SemanticDispatchStage) ProcessStream(ctx context.Context, req *model.Pr
 	type semanticResult struct {
 		resp *model.ChatResponse
 		emb  []float32
+		text string
 	}
 
 	semanticCh := make(chan semanticResult, 1)
 
 	// Semantic path — runs in parallel with dispatch.
 	go func() {
-		resp, emb, _ := s.semantic.Lookup(ctx, &req.ChatRequest)
-		semanticCh <- semanticResult{resp: resp, emb: emb}
+		resp, emb, text, _ := s.semantic.Lookup(ctx, &req.ChatRequest)
+		semanticCh <- semanticResult{resp: resp, emb: emb, text: text}
 	}()
 
 	// Create a gated writer: dispatch writes go through this, but if semantic
@@ -187,7 +200,12 @@ func (s *SemanticDispatchStage) ProcessStream(ctx context.Context, req *model.Pr
 		chatReq := req.ChatRequest
 		resp := dispRes.resp.ChatResponse
 		emb := semRes.emb
-		go s.semantic.Store(context.Background(), &chatReq, resp, emb)
+		text := semRes.text
+		go func() {
+			if err := s.semantic.Store(context.Background(), &chatReq, resp, emb, text); err != nil {
+				s.logger.Warn("async semantic store failed", "error", err)
+			}
+		}()
 	}
 
 	if dispRes.err != nil {

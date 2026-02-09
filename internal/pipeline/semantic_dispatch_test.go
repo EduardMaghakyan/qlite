@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -102,7 +103,7 @@ func TestSemanticDispatch_SemanticHit(t *testing.T) {
 	sc := cache.NewSemanticCache(embClient, qdrantClient, 0.95)
 
 	dispatch := newTestDispatch(slowProvider.URL + "/v1")
-	stage := NewSemanticDispatchStage(sc, dispatch)
+	stage := NewSemanticDispatchStage(sc, dispatch, slog.Default())
 
 	req := &model.ProxyRequest{
 		ChatRequest: model.ChatRequest{
@@ -153,7 +154,7 @@ func TestSemanticDispatch_SemanticMiss_DispatchWins(t *testing.T) {
 	sc := cache.NewSemanticCache(embClient, qdrantClient, 0.95)
 
 	dispatch := newTestDispatch(upstream.URL + "/v1")
-	stage := NewSemanticDispatchStage(sc, dispatch)
+	stage := NewSemanticDispatchStage(sc, dispatch, slog.Default())
 
 	req := &model.ProxyRequest{
 		ChatRequest: model.ChatRequest{
@@ -201,7 +202,7 @@ func TestSemanticDispatch_SkipHighTemperature(t *testing.T) {
 	sc := cache.NewSemanticCache(embClient, qdrantClient, 0.95)
 
 	dispatch := newTestDispatch(upstream.URL + "/v1")
-	stage := NewSemanticDispatchStage(sc, dispatch)
+	stage := NewSemanticDispatchStage(sc, dispatch, slog.Default())
 
 	temp := 0.7
 	req := &model.ProxyRequest{
@@ -249,7 +250,7 @@ func TestSemanticDispatch_StreamSemanticHit(t *testing.T) {
 	sc := cache.NewSemanticCache(embClient, qdrantClient, 0.95)
 
 	dispatch := newTestDispatch(slowProvider.URL + "/v1")
-	stage := NewSemanticDispatchStage(sc, dispatch)
+	stage := NewSemanticDispatchStage(sc, dispatch, slog.Default())
 
 	sw := newTestSSEWriter()
 	req := &model.ProxyRequest{
