@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/eduardmaghakyan/qlite/internal/model"
 	"github.com/eduardmaghakyan/qlite/internal/provider"
@@ -83,7 +82,6 @@ func TestPipeline_Execute(t *testing.T) {
 			Messages: []model.Message{{Role: "user", Content: "Hello"}},
 		},
 		RequestID:   "test-123",
-		ReceivedAt:  time.Now(),
 		InputTokens: 5,
 	}
 
@@ -145,7 +143,6 @@ func TestPipeline_ExecuteStream(t *testing.T) {
 			Messages: []model.Message{{Role: "user", Content: "Hello"}},
 		},
 		RequestID:   "test-stream-123",
-		ReceivedAt:  time.Now(),
 		InputTokens: 5,
 	}
 
@@ -187,8 +184,7 @@ func TestPipeline_UnknownModel(t *testing.T) {
 			Model:    "unknown-model",
 			Messages: []model.Message{{Role: "user", Content: "Hello"}},
 		},
-		RequestID:  "test-404",
-		ReceivedAt: time.Now(),
+		RequestID: "test-404",
 	}
 
 	_, err := pipe.Execute(context.Background(), proxyReq)

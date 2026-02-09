@@ -239,7 +239,6 @@ func TestCacheStage_FullPipelineIntegration(t *testing.T) {
 	req1 := &model.ProxyRequest{
 		ChatRequest: chatReq,
 		RequestID:   "req-1",
-		ReceivedAt:  time.Now(),
 	}
 	resp1, err := pipe.Execute(context.Background(), req1)
 	if err != nil {
@@ -259,7 +258,6 @@ func TestCacheStage_FullPipelineIntegration(t *testing.T) {
 	req2 := &model.ProxyRequest{
 		ChatRequest: chatReq,
 		RequestID:   "req-2",
-		ReceivedAt:  time.Now(),
 	}
 	resp2, err := pipe.Execute(context.Background(), req2)
 	if err != nil {

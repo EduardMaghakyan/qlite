@@ -263,6 +263,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 	var msgID string
 	var modelName string
 	var curEvent []byte
+	created := time.Now().Unix()
 
 	eventPrefix := []byte("event: ")
 
@@ -294,7 +295,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 			chunk := model.ChatStreamChunk{
 				ID:      msgID,
 				Object:  "chat.completion.chunk",
-				Created: time.Now().Unix(),
+				Created: created,
 				Model:   modelName,
 				Choices: []model.StreamChoice{
 					{Index: 0, Delta: model.Delta{Role: "assistant"}},
@@ -312,7 +313,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 			chunk := model.ChatStreamChunk{
 				ID:      msgID,
 				Object:  "chat.completion.chunk",
-				Created: time.Now().Unix(),
+				Created: created,
 				Model:   modelName,
 				Choices: []model.StreamChoice{
 					{Index: 0, Delta: model.Delta{Content: cbd.Delta.Text}},
@@ -332,7 +333,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req *model.ChatRequest, sw s
 			chunk := model.ChatStreamChunk{
 				ID:      msgID,
 				Object:  "chat.completion.chunk",
-				Created: time.Now().Unix(),
+				Created: created,
 				Model:   modelName,
 				Choices: []model.StreamChoice{
 					{

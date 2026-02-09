@@ -2,7 +2,6 @@ package model
 
 import (
 	"encoding/json"
-	"time"
 )
 
 // Message represents a chat message.
@@ -83,7 +82,6 @@ type ChatStreamChunk struct {
 type ProxyRequest struct {
 	ChatRequest    ChatRequest
 	RequestID      string
-	ReceivedAt     time.Time
 	InputTokens    int
 	APIKey         string
 	CacheKey       string // precomputed exact-cache key, set by CacheStage

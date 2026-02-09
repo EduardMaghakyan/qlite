@@ -20,11 +20,13 @@ func WriteResponseAsSSE(sw Writer, resp *model.ChatResponse) error {
 	buf.Reset()
 	defer replayBufPool.Put(buf)
 
+	created := time.Now().Unix()
+
 	// Send role chunk.
 	roleChunk := model.ChatStreamChunk{
 		ID:      resp.ID,
 		Object:  "chat.completion.chunk",
-		Created: time.Now().Unix(),
+		Created: created,
 		Model:   resp.Model,
 		Choices: []model.StreamChoice{
 			{
@@ -46,7 +48,7 @@ func WriteResponseAsSSE(sw Writer, resp *model.ChatResponse) error {
 		contentChunk := model.ChatStreamChunk{
 			ID:      resp.ID,
 			Object:  "chat.completion.chunk",
-			Created: time.Now().Unix(),
+			Created: created,
 			Model:   resp.Model,
 			Choices: []model.StreamChoice{
 				{
@@ -68,7 +70,7 @@ func WriteResponseAsSSE(sw Writer, resp *model.ChatResponse) error {
 	finishChunk := model.ChatStreamChunk{
 		ID:      resp.ID,
 		Object:  "chat.completion.chunk",
-		Created: time.Now().Unix(),
+		Created: created,
 		Model:   resp.Model,
 		Choices: []model.StreamChoice{
 			{

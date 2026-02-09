@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/eduardmaghakyan/qlite/internal/cache"
 	"github.com/eduardmaghakyan/qlite/internal/model"
@@ -72,7 +71,6 @@ func (h *Handler) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	proxyReq := &model.ProxyRequest{
 		ChatRequest: chatReq,
 		RequestID:   GetRequestID(r.Context()),
-		ReceivedAt:  time.Now(),
 		InputTokens: inputTokens,
 		APIKey:      apiKey,
 	}
