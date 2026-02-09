@@ -207,10 +207,11 @@ func (g *Google) Chat(ctx context.Context, req *model.ChatRequest) (*model.ChatR
 		}
 	}
 
+	now := time.Now()
 	return &model.ChatResponse{
-		ID:      "gen-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		ID:      "gen-" + strconv.FormatInt(now.UnixNano(), 10),
 		Object:  "chat.completion",
-		Created: time.Now().Unix(),
+		Created: now.Unix(),
 		Model:   req.Model,
 		Choices: []model.Choice{
 			{
@@ -254,8 +255,9 @@ func (g *Google) ChatStream(ctx context.Context, req *model.ChatRequest, sw sse.
 		return nil, fmt.Errorf("upstream error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	genID := "gen-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	created := time.Now().Unix()
+	now := time.Now()
+	genID := "gen-" + strconv.FormatInt(now.UnixNano(), 10)
+	created := now.Unix()
 	var usage model.Usage
 	first := true
 
