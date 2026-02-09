@@ -70,8 +70,8 @@ func (s *writer) Done() error {
 func WriteJSON(sw Writer, v any) error {
 	buf := jsonBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
+	defer jsonBufPool.Put(buf)
 	if err := json.NewEncoder(buf).Encode(v); err != nil {
-		jsonBufPool.Put(buf)
 		return err
 	}
 	b := buf.Bytes()
@@ -79,7 +79,5 @@ func WriteJSON(sw Writer, v any) error {
 	if len(b) > 0 && b[len(b)-1] == '\n' {
 		b = b[:len(b)-1]
 	}
-	err := sw.WriteEvent(b)
-	jsonBufPool.Put(buf)
-	return err
+	return sw.WriteEvent(b)
 }

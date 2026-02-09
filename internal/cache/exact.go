@@ -65,9 +65,9 @@ func KeyFor(req *model.ChatRequest) string {
 	}
 	buf := keyBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
+	defer keyBufPool.Put(buf)
 	json.NewEncoder(buf).Encode(k)
 	h := sha256.Sum256(buf.Bytes())
-	keyBufPool.Put(buf)
 	return hex.EncodeToString(h[:])
 }
 
