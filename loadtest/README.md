@@ -1,10 +1,9 @@
 # Load Testing
 
-Measures **proxy overhead** — the latency qlite adds on top of the upstream provider. The target is **< 10ms P99 overhead**.
+Measures **proxy overhead** and **cost savings** during load tests.
 
-```
-overhead = proxy_latency - direct_latency
-```
+- **Overhead** = `proxy_latency - direct_latency` (target: < 10ms P99)
+- **Cost savings** = cache hit rate and dollar savings (from `X-Request-Cost` / `X-Cost-Saved` headers)
 
 ## Prerequisites
 
@@ -47,67 +46,18 @@ Non-streaming requests return a single JSON response after one latency sleep. St
 
 The qlite proxy reads its config from `QLITE_CONFIG` (defaults to `config/config.yaml`). For load testing, use `config/config.mock.yaml`, which routes OpenAI models (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1-nano`), Anthropic models (`claude-sonnet-4-5`, `claude-haiku-4-5`), and Google models (`gemini-2.5-flash`, `gemini-2.5-pro`) to the mock server at `localhost:9999`.
 
-### Locust Suite (`loadtest/locustfile.py`)
+### Locust Test (`loadtest/locustfile.py`)
 
-A Locust test suite with 6 tasks that exercise both proxied and direct (baseline) paths. Users wait 0.5–2s between tasks.
-
-### Cache Load Test (`loadtest/cache_locustfile.py`)
-
-A Locust test suite focused on cache performance at configurable hit rates. Set the target hit rate with the `CACHE_HIT_RATE` env var (0–100, default 0). During startup each user warms the cache by sending 10 fixed messages. During the test, each request randomly rolls against `CACHE_HIT_RATE` to decide whether to re-use a cached message or send a unique one. At test end a summary prints the actual vs target hit rate.
+A single Locust test with 4 tasks covering both proxy overhead and cost savings.
 
 ## Locust Test Tasks
 
 | Task | Weight | Description |
 |------|--------|-------------|
-| `chat_non_streaming` | 3 | Non-streaming chat via proxy. Validates `choices` in response. |
-| `chat_streaming` | 3 | Streaming chat via proxy. Consumes full SSE stream and fires a custom `TTFB [stream]` metric. |
-| `chat_medium` | 2 | Non-streaming with system message via proxy. Validates `X-Cache` and `X-Provider` headers. |
-| `direct_non_streaming` | 1 | Non-streaming directly to mock server (baseline). Bypasses proxy. |
-| `direct_streaming` | 1 | Streaming directly to mock server (baseline). Bypasses proxy. |
-| `health_check` | 1 | `GET /health` via proxy. |
-
-## Cache Test Tasks
-
-| Task | Weight | Description |
-|------|--------|-------------|
-| `cache_request` | 1 | Rolls against `CACHE_HIT_RATE` to pick a cached or unique message. Names requests `[cache-HIT]`/`[cache-MISS]` for separate Locust stats. |
-
-### Multi-Provider Overhead Test (`loadtest/provider_locustfile.py`)
-
-A focused Locust test that exercises all 3 provider adapter paths (OpenAI, Anthropic, Google) with cache disabled to measure pure proxy overhead for each. Includes both proxied and direct-to-mock baselines for fair comparison.
-
-## Provider Test Tasks
-
-| Task | Weight | Description |
-|------|--------|-------------|
-| `openai_non_stream` | 1 | Non-streaming via proxy, OpenAI model |
-| `openai_stream` | 1 | Streaming via proxy, OpenAI model |
-| `anthropic_non_stream` | 1 | Non-streaming via proxy, Anthropic model |
-| `anthropic_stream` | 1 | Streaming via proxy, Anthropic model |
-| `google_non_stream` | 1 | Non-streaming via proxy, Google model |
-| `google_stream` | 1 | Streaming via proxy, Google model |
-| `direct_openai` | 1 | Direct baseline, OpenAI mock |
-| `direct_anthropic` | 1 | Direct baseline, Anthropic mock |
-| `direct_google` | 1 | Direct baseline, Google mock |
-| `direct_openai_stream` | 1 | Direct streaming baseline, OpenAI mock |
-| `direct_anthropic_stream` | 1 | Direct streaming baseline, Anthropic mock |
-| `direct_google_stream` | 1 | Direct streaming baseline, Google mock |
-
-### Running the Provider Test
-
-```bash
-# Terminal 1 — Mock server
-go run ./cmd/mockserver/ -port 9999 -latency 50ms
-
-# Terminal 2 — Proxy with cache disabled
-QLITE_CACHE=false QLITE_CONFIG=config/config.mock.yaml go run ./cmd/proxy/
-
-# Terminal 3 — Multi-provider load test
-locust -f loadtest/provider_locustfile.py --host http://localhost:8080 \
-  --users 20 --spawn-rate 5 --run-time 60s --headless
-```
-
-Compare per-provider metrics: `[openai non-stream]` vs `direct [openai non-stream]`, etc. The overhead for Anthropic and Google adapters includes request/response translation cost and should be comparable to OpenAI pass-through.
+| `proxy_non_streaming` | 3 | Non-streaming via proxy. Records cost headers. |
+| `proxy_streaming` | 3 | Streaming via proxy. TTFB metric + cost headers. |
+| `direct_non_streaming` | 1 | Direct-to-mock baseline (non-streaming). |
+| `direct_streaming` | 1 | Direct-to-mock baseline (streaming TTFB). |
 
 ## Environment Variables
 
@@ -117,10 +67,6 @@ Compare per-provider metrics: `[openai non-stream]` vs `direct [openai non-strea
 | `OPENAI_API_KEY` | `test-key` | API key header value |
 | `MOCK_URL` | `http://localhost:9999` | Direct mock server URL for baseline tasks |
 | `QLITE_CACHE` | `true` | Enable/disable proxy cache. Set to `false` for pure overhead measurement. Used via `${QLITE_CACHE:-true}` in `config.mock.yaml`. |
-| `QLITE_OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model for provider test |
-| `QLITE_ANTHROPIC_MODEL` | `claude-haiku-4-5` | Anthropic model for provider test |
-| `QLITE_GOOGLE_MODEL` | `gemini-2.5-flash` | Google model for provider test |
-| `CACHE_HIT_RATE` | `0` | Target cache hit rate (0–100). 0 = all misses, 100 = all hits after warmup. |
 
 ## Go Benchmarks
 
@@ -141,11 +87,13 @@ Both tests assert P99 overhead < 10ms and report P50/P99 latencies for direct an
 In Locust output, compare the P99 (or average) of baseline vs proxied requests:
 
 - **`direct [non-stream]`** — baseline latency hitting the mock server directly
-- **`/v1/chat/completions [non-stream]`** — same request routed through qlite
+- **`proxy [non-stream]`** — same request routed through qlite
 
 The difference is the proxy overhead. Target: **< 10ms**.
 
-For streaming, the **`TTFB [stream]`** metric shows time-to-first-byte — the delay from sending the request to receiving the first SSE data chunk through the proxy. This captures the proxy's streaming setup overhead.
+For streaming, compare **`TTFB [direct-stream]`** vs **`TTFB [proxy-stream]`** for time-to-first-byte overhead.
+
+At the end of the test, a **Cost Savings Summary** prints cache hit/miss counts, hit rate, total API cost, total saved, and savings percentage.
 
 ## Locust Web UI
 
@@ -178,21 +126,9 @@ go run ./cmd/mockserver/ -port 9999 -latency 5ms -chunks 20 -response-tokens 100
 locust -f loadtest/locustfile.py --host http://localhost:8080 \
   --users 20 --spawn-rate 5 --run-time 60s --headless --csv=results
 
-# Normal test without cache (pure overhead measurement)
+# Pure overhead measurement (cache disabled)
 QLITE_CACHE=false locust -f loadtest/locustfile.py --host http://localhost:8080 \
   --users 20 --spawn-rate 5 --run-time 60s --headless
-
-# Cache load test — 80% hit rate
-CACHE_HIT_RATE=80 locust -f loadtest/cache_locustfile.py \
-  --host http://localhost:8080 --users 20 --spawn-rate 5 --run-time 60s --headless
-
-# Cache — all misses
-CACHE_HIT_RATE=0 locust -f loadtest/cache_locustfile.py \
-  --host http://localhost:8080 --users 20 --spawn-rate 5 --run-time 60s --headless
-
-# Cache — all hits (after warmup)
-CACHE_HIT_RATE=100 locust -f loadtest/cache_locustfile.py \
-  --host http://localhost:8080 --users 20 --spawn-rate 5 --run-time 60s --headless
 ```
 
 ## Benchmark Results
